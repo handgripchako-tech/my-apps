@@ -27,7 +27,7 @@ jobs:
       - name: 署名鍵を復元
         uses: ./.github/actions/restore-key
         with:
-          key: ${{ secrets.SIGN_DEBUG }}
+          key: ${{ secrets.SIGN_PC98DISK }}
           path: /home/runner/.android/debug.keystore
 
       - uses: actions/setup-java@v4
