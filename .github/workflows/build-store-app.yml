@@ -1,0 +1,114 @@
+name: build-store-app
+
+on:
+  push:
+    paths:
+      - 'store-app/**'
+      - '!store-app/apps.json'
+      - '.github/workflows/build-store-app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 署名鍵を復元
+        uses: ./.github/actions/restore-key
+        with:
+          key: ${{ secrets.SIGN_RELEASE }}
+          path: store-app/release.jks
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android project
+        working-directory: store-app
+        run: |
+          # lib と pubspec は自作のものを守り、android/ だけ新しく作る
+          rm -rf /tmp/keep && mkdir -p /tmp/keep
+          cp -r lib /tmp/keep/lib
+          cp pubspec.yaml /tmp/keep/pubspec.yaml
+          flutter create . --platforms=android --org com.chako --project-name store_app
+          cp /tmp/keep/pubspec.yaml pubspec.yaml
+          rm -rf lib test
+          cp -r /tmp/keep/lib lib
+
+      - name: Patch Android settings (install, provider, channel)
+        working-directory: store-app
+        run: |
+          python3 patch_android.py
+          cat android/app/src/main/AndroidManifest.xml
+
+      - name: アプリ別アイコンを生成
+        continue-on-error: true
+        run: |
+          python3 -c "import PIL" 2>/dev/null || python3 -m pip install --quiet --break-system-packages pillow
+
+      - name: Build release APK (arm64)
+        working-directory: store-app
+        run: |
+          flutter pub get
+          flutter build apk --release --target-platform android-arm64 --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
+
+      - name: Sign with fixed key
+        working-directory: store-app
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" sign --ks release.jks --ks-pass pass:galleryapp --key-pass pass:galleryapp \
+            --out ../store-app.apk build/app/outputs/flutter-apk/app-release.apk
+          "$BT/apksigner" verify --print-certs ../store-app.apk | head -3
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true # 保存容量が満杯でも、リリースは作る
+        with:
+          name: store-app-apk
+          path: store-app.apk
+
+      - name: 更新内容を作成
+        uses: ./.github/actions/release-notes
+        with:
+          paths: store-app
+
+      - name: Publish release (latest store APK)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp store-app.apk store-app-v${{ github.run_number }}.apk
+
+      - uses: ./.github/actions/publish-release
+        with:
+          tag: store-latest
+          apk: store-app-v${{ github.run_number }}.apk
+          title: 最新のストアAPK
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ntfy 通知（成功）
+        if: success()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: ストア
+          tag: store-latest
+          status: success
+
+      - name: ntfy 通知（失敗）
+        if: failure()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: ストア
+          tag: store-latest
+          status: failure

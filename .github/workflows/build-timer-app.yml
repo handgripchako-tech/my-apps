@@ -1,0 +1,80 @@
+name: build-timer-app
+
+on:
+  push:
+    paths:
+      - 'timer-app/**'
+      - '.github/workflows/build-timer-app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 署名鍵を復元
+        uses: ./.github/actions/restore-key
+        with:
+          key: ${{ secrets.SIGN_DEBUG }}
+          path: timer-app/debug.keystore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        working-directory: timer-app
+        run: gradle --no-daemon assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true # 保存容量が満杯でも、リリースは作る
+        with:
+          name: timer-apk
+          path: timer-app/app/build/outputs/apk/release/app-release.apk
+
+      - name: 更新内容を作成
+        uses: ./.github/actions/release-notes
+        with:
+          paths: timer-app
+
+      - name: Publish release (latest APK)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp timer-app/app/build/outputs/apk/release/app-release.apk timer.apk
+          cp timer.apk timer-v${{ github.run_number }}.apk
+
+      - uses: ./.github/actions/publish-release
+        with:
+          tag: timer-latest
+          apk: timer-v${{ github.run_number }}.apk
+          title: 最新の時限起動APK
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ntfy 通知（成功）
+        if: success()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: 時限起動
+          tag: timer-latest
+          status: success
+
+      - name: ntfy 通知（失敗）
+        if: failure()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: 時限起動
+          tag: timer-latest
+          status: failure

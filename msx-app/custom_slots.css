@@ -1,0 +1,5 @@
+/* 右側の SAVE1 / LOAD1 ボタンの文字サイズ */
+#wmsx-touch-right .msx-slot {
+    font-size: 13px;
+    letter-spacing: -0.5px;
+}

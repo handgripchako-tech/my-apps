@@ -1,0 +1,4 @@
+*.jks
+*.keystore
+*.bak*
+__pycache__/

@@ -1,0 +1,9 @@
+/* 左側グループ（十字キー）を下へずらす。数値を大きくするとさらに下がる（画面の高さに対する%） */
+html.wmsx-full-screen.wmsx-touch-active #wmsx-touch-left {
+    translate: 0 16vh;
+}
+/* 早送りがオンの間の目印 */
+#wmsx-touch-fast.ff-on {
+    background: rgba(255, 170, 0, 0.55);
+    border-radius: 12px;
+}

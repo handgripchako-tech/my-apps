@@ -1,0 +1,23 @@
+name: release-notes
+description: 直近のコミット名から更新内容を release-notes.md に書き出す（ストアに表示される）
+inputs:
+  paths:
+    description: このアプリのフォルダ（スペース区切り。例 "launcher-app"）
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APP_PATHS: ${{ inputs.paths }}
+        BUILD_NO: ${{ github.run_number }}
+      run: |
+        git fetch -q --depth=100 origin "$GITHUB_SHA" || true
+        export TZ=Asia/Tokyo
+        {
+          echo "ビルド #${BUILD_NO}"
+          LOG=$(git log -8 --no-merges --date=format:'%m/%d' --format='・%s（%cd）' -- $APP_PATHS \
+            | grep -v -E '^・(結果|要承認|拒否):' || true)
+          if [ -n "$LOG" ]; then echo "$LOG"; else echo "・（更新内容の記録なし）"; fi
+        } > release-notes.md
+        cat release-notes.md

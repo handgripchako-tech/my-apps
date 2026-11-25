@@ -1,0 +1,146 @@
+name: build-np2-app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'np2-app/**'
+      - '.github/workflows/build-np2-app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  # NP2kai（MIT）の固定コミット。上げるときはここを変える
+  NP2KAI_REF: 5939e0c6d5985c4c08fc70f289a83290e5d3e6f7
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 署名鍵を復元
+        uses: ./.github/actions/restore-key
+        with:
+          key: ${{ secrets.SIGN_DEBUG }}
+          path: np2-app/debug.keystore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: NP2kai を取得
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          git init np2kai
+          cd np2kai
+          git remote add origin https://github.com/AZO234/NP2kai.git
+          git fetch --depth 1 origin "$NP2KAI_REF"
+          git checkout FETCH_HEAD
+          # 上流 Android.mk の書き間違い（$ 抜け）を直す
+          sed -i 's/INCFLAGS += (NP21_INCFLAGS)/INCFLAGS += $(NP21_INCFLAGS)/' jni/Android.mk
+          grep -n "NP21_INCFLAGS" jni/Android.mk
+          # 上流の Makefile.common に抜けている YMZ ADPCM の2ファイルを足す（CMake側にはある）
+          sed -i 's#^\t\$(NP2_PATH)/sound/adpcmg.c \\#\t$(NP2_PATH)/sound/adpcmg.c \\\n\t$(NP2_PATH)/sound/ymzadpcmc.c \\\n\t$(NP2_PATH)/sound/ymzadpcmg.c \\#' sdl/Makefile.common
+          grep -n "ymzadpcm" sdl/Makefile.common
+          # HDD を2台渡されたとき、2台目が DOS から見えない問題への対策。
+          # 既定の IDE 配置は {HDD, CDROM, HDD, HDD} で、2台目が2番目のチャネル（slot2）に入ってしまう。
+          # 2台のときだけ {HDD, HDD, CDROM, HDD}（旧機種互換配置）にして、2台目を slot1 に入れる
+          sed -i 's#^\(\s*\)setmedia = drvhddSCSI = HDCount = CDCount = 0;#&\n\1if (argc >= 3) { np2cfg.idetype[0] = SXSIDEV_HDD; np2cfg.idetype[1] = SXSIDEV_HDD; np2cfg.idetype[2] = SXSIDEV_CDROM; np2cfg.idetype[3] = SXSIDEV_HDD; }#' sdl/np2.c
+          grep -n -A1 "setmedia = drvhddSCSI" sdl/np2.c
+
+      - name: コアを Android(arm64) 用にビルド
+        run: |
+          set -o pipefail
+          export NP2KAI_VERSION=rev22
+          export NP2KAI_HASH="${NP2KAI_REF:0:7}"
+          echo "NDK: $ANDROID_NDK_HOME"
+          cd np2kai/jni
+          "$ANDROID_NDK_HOME/ndk-build" \
+            APP_ABI=arm64-v8a APP_PLATFORM=android-26 \
+            -j"$(nproc)" 2>&1 | tee "$RUNNER_TEMP/logs/core.log"
+
+      - name: コアを APK の部品として配置
+        run: |
+          set -o pipefail
+          J=np2-app/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$J"
+          ls -la np2kai/libs/arm64-v8a/
+          cp np2kai/libs/arm64-v8a/libretro.so "$J/libnp2kai_core.so"
+          [ -f np2kai/libs/arm64-v8a/libc++_shared.so ] && cp np2kai/libs/arm64-v8a/libc++_shared.so "$J/" || true
+          cp np2kai/sdl/libretro/libretro-common/include/libretro.h np2-app/app/src/main/cpp/
+          readelf -d "$J/libnp2kai_core.so" | grep -E 'NEEDED|SONAME' || true
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        working-directory: np2-app
+        run: |
+          set -o pipefail
+          gradle --no-daemon assembleRelease 2>&1 | tee "$RUNNER_TEMP/logs/gradle.log"
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true # 保存容量が満杯でも、リリースは作る
+        with:
+          name: np2-apk
+          path: np2-app/app/build/outputs/apk/release/app-release.apk
+
+      - name: 更新内容を作成
+        uses: ./.github/actions/release-notes
+        with:
+          paths: np2-app
+
+      - name: Publish release (latest APK)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp np2-app/app/build/outputs/apk/release/app-release.apk np2.apk
+          cp np2.apk np2-v${{ github.run_number }}.apk
+
+      # 失敗の調査用に、ログの末尾を別ブランチ np2-logs に置く（main には入れない）
+
+      - uses: ./.github/actions/publish-release
+        with:
+          tag: np2-latest
+          apk: np2-v${{ github.run_number }}.apk
+          title: 最新のPC-98エミュAPK
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ログを np2-logs ブランチへ保存
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          for n in core gradle; do
+            [ -f "$RUNNER_TEMP/logs/$n.log" ] && tail -n 300 "$RUNNER_TEMP/logs/$n.log" > "$RUNNER_TEMP/out/$n.tail.txt" || true
+          done
+          echo "run: ${{ github.run_id }}  status: ${{ job.status }}" > "$RUNNER_TEMP/out/status.txt"
+          cd "$RUNNER_TEMP/out"
+          git init -q
+          git checkout -q -b np2-logs
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -q -m "np2 build log ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" np2-logs
+
+      - name: ntfy 通知（成功）
+        if: success()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: PC-98エミュ
+          tag: np2-latest
+          status: success
+
+      - name: ntfy 通知（失敗）
+        if: failure()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: PC-98エミュ
+          tag: np2-latest
+          status: failure

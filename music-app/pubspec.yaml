@@ -1,0 +1,27 @@
+name: music_app
+description: test-server の音楽プレーヤー
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  just_audio: ^0.9.40
+  audio_service: ^0.18.15
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  permission_handler: ^11.3.1
+  path_provider: ^2.1.4
+  ffi: ^2.1.0
+  connectivity_plus: ^6.0.5
+  file_picker: ^8.1.2
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: DotGothic16
+      fonts:
+        - asset: fonts/DotGothic16-Regular.ttf

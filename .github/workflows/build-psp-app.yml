@@ -1,0 +1,121 @@
+name: build-psp-app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'psp-app/**'
+      - '.github/workflows/build-psp-app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  # PPSSPP（GPLv2）の固定タグ。上げるときはここを変える
+  PPSSPP_REF: v1.20.4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # PPSSPP は ~/.android/debug.keystore で署名される。毎回同じ鍵にして上書き更新できるようにする
+      - name: 署名鍵を復元
+        uses: ./.github/actions/restore-key
+        with:
+          key: ${{ secrets.SIGN_DEBUG }}
+          path: /home/runner/.android/debug.keystore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: PPSSPP を取得（サブモジュール込み）
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          git clone --depth 1 --branch "$PPSSPP_REF" --recurse-submodules --shallow-submodules \
+            https://github.com/hrydgard/ppsspp.git ppsspp
+
+      - name: S26向けパッチ
+        run: bash psp-app/patch.sh "$GITHUB_WORKSPACE/ppsspp"
+
+      - name: NDK を用意
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.14206865" "cmake;3.31.6" >/dev/null || \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.14206865" >/dev/null
+
+      - name: Build APK
+        working-directory: ppsspp
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleNormalOptimized 2>&1 | tee "$RUNNER_TEMP/logs/gradle.log"
+
+      - name: APK を探す
+        run: |
+          APK=$(find ppsspp -path '*outputs/apk*' -name '*.apk' | grep -i optimized | head -1)
+          echo "APK=$APK"
+          [ -n "$APK" ] && cp "$APK" psp.apk
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true # 保存容量が満杯でも、リリースは作る
+        with:
+          name: psp-apk
+          path: psp.apk
+
+      - name: 更新内容を作成
+        uses: ./.github/actions/release-notes
+        with:
+          paths: psp-app
+
+      - name: Publish release (latest APK)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp psp.apk psp-v${{ github.run_number }}.apk
+
+      # 失敗の調査用に、ログの末尾を別ブランチ psp-logs に置く（main には入れない）
+
+      - uses: ./.github/actions/publish-release
+        with:
+          tag: psp-latest
+          apk: psp-v${{ github.run_number }}.apk
+          title: 最新のPSPエミュAPK
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ログを psp-logs ブランチへ保存
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          [ -f "$RUNNER_TEMP/logs/gradle.log" ] && tail -n 300 "$RUNNER_TEMP/logs/gradle.log" > "$RUNNER_TEMP/out/gradle.tail.txt" || true
+          echo "run: ${{ github.run_id }}  status: ${{ job.status }}" > "$RUNNER_TEMP/out/status.txt"
+          cd "$RUNNER_TEMP/out"
+          git init -q
+          git checkout -q -b psp-logs
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -q -m "psp build log ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" psp-logs
+
+      - name: ntfy 通知（成功）
+        if: success()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: PSPエミュ
+          tag: psp-latest
+          status: success
+
+      - name: ntfy 通知（失敗）
+        if: failure()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: PSPエミュ
+          tag: psp-latest
+          status: failure

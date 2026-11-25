@@ -1,0 +1,15 @@
+name: pc98disk
+description: PC-98 ディスクイメージ(HDI/FDI/D88)の中身を見て取り出すビューア
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_picker: ^10.1.0
+
+flutter:
+  uses-material-design: true

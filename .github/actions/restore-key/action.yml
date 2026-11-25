@@ -1,0 +1,24 @@
+name: restore-key
+description: 署名鍵をシークレット（base64）から取り出してファイルに戻す。鍵は公開リポジトリには置かない
+inputs:
+  key:
+    description: 鍵ファイルを base64 にした文字列（secrets.SIGN_RELEASE など）
+    required: true
+  path:
+    description: 書き出す場所（例 gallery-app/release.jks）
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KEY_B64: ${{ inputs.key }}
+        OUT: ${{ inputs.path }}
+      run: |
+        if [ -z "$KEY_B64" ]; then
+          echo "::error::署名鍵のシークレットが未登録です（$OUT 用）。Settings → Secrets → Actions に登録してください"
+          exit 1
+        fi
+        mkdir -p "$(dirname "$OUT")"
+        printf '%s' "$KEY_B64" | base64 -d > "$OUT"
+        echo "鍵を復元: $OUT ($(wc -c < "$OUT") バイト)"

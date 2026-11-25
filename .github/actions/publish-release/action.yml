@@ -1,0 +1,60 @@
+name: publish-release
+description: gh コマンドが無い self-hosted runner でも、最新APKのリリースを作り直す（curl 版）。あわせて古い成果物(artifact)を消す
+inputs:
+  tag:
+    description: リリースのタグ（例 gallery-latest）
+    required: true
+  apk:
+    description: 添付するAPKのファイル名
+    required: true
+  title:
+    description: リリースの題名
+    required: true
+  token:
+    description: GITHUB_TOKEN
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        APK: ${{ inputs.apk }}
+        TITLE: ${{ inputs.title }}
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -e
+        API="https://api.github.com/repos/$REPO"
+        auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+        # 前のリリースとタグを消す
+        old=$(curl -sS "${auth[@]}" "$API/releases/tags/$TAG" | jq -r '.id // empty')
+        if [ -n "$old" ]; then curl -sS -X DELETE "${auth[@]}" "$API/releases/$old" >/dev/null; fi
+        curl -sS -X DELETE "${auth[@]}" "$API/git/refs/tags/$TAG" >/dev/null || true
+        # 新しいリリースを作る
+        rid=$(jq -n --arg t "$TAG" --arg n "$TITLE" --rawfile b release-notes.md --arg c "$GITHUB_SHA" \
+          '{tag_name:$t,name:$n,body:$b,target_commitish:$c}' \
+          | curl -sS -X POST "${auth[@]}" -d @- "$API/releases" | jq -r '.id // empty')
+        [ -n "$rid" ] || { echo "リリースを作れませんでした"; exit 1; }
+        # APKを添付する
+        curl -sS --fail -X POST "${auth[@]}" -H "Content-Type: application/vnd.android.package-archive" \
+          --data-binary @"$APK" "https://uploads.github.com/repos/$REPO/releases/$rid/assets?name=$APK" >/dev/null
+        echo "公開しました: https://github.com/$REPO/releases/tag/$TAG"
+        # 古い成果物を消す（名前ごとに最新1件だけ残す）。失敗しても無視する
+        (
+          tmp=$(mktemp)
+          page=1
+          while [ "$page" -le 20 ]; do
+            r=$(curl -sS "${auth[@]}" "$API/actions/artifacts?per_page=100&page=$page")
+            n=$(echo "$r" | jq '.artifacts | length')
+            [ "$n" -gt 0 ] || break
+            echo "$r" | jq -c '.artifacts[] | {id,name,created_at}' >> "$tmp"
+            page=$((page+1))
+          done
+          cnt=0
+          for id in $(jq -s -r 'group_by(.name) | map(sort_by(.created_at) | reverse | .[1:][].id) | .[]' "$tmp"); do
+            curl -sS -X DELETE "${auth[@]}" "$API/actions/artifacts/$id" >/dev/null && cnt=$((cnt+1))
+          done
+          rm -f "$tmp"
+          echo "古い成果物を ${cnt} 件消しました"
+        ) || echo "成果物の掃除に失敗しました（無視します）"

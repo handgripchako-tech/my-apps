@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">時限起動</string>
+    <string name="a11y_desc">指定した時刻にアプリを起動し、簡単なタップ操作（マクロ）を実行します。</string>
+</resources>

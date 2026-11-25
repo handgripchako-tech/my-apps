@@ -1,0 +1,101 @@
+name: pc98disk-app
+
+on:
+  push:
+    paths:
+      - "pc98disk-app/**"
+      - ".github/workflows/pc98disk-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 署名鍵を復元
+        uses: ./.github/actions/restore-key
+        with:
+          key: ${{ secrets.SIGN_PC98DISK }}
+          path: pc98disk-app/debug.keystore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # 毎回同じ署名にして、上書きインストールできるようにする
+      - name: 署名キーを配置
+        run: |
+          mkdir -p ~/.android
+          cp pc98disk-app/debug.keystore ~/.android/debug.keystore
+
+      - name: Androidプロジェクトを生成
+        working-directory: pc98disk-app
+        run: |
+          rm -rf /tmp/keep && mkdir -p /tmp/keep && cp -r pubspec.yaml lib /tmp/keep/
+          flutter create --platforms=android --org com.example --project-name pc98disk .
+          cp /tmp/keep/pubspec.yaml . && cp /tmp/keep/lib/*.dart lib/
+          sed -i 's/android:label="[^"]*"/android:label="PC98ディスク"/' android/app/src/main/AndroidManifest.xml
+
+      # 部品側の compileSdk が古いとビルドが落ちるので全部品を36へ揃える
+      - name: compileSdk を揃える
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/compilesdk.gradle <<'GRADLE'
+          allprojects {
+            afterEvaluate { p ->
+              try {
+                if (p.plugins.hasPlugin('com.android.library') || p.plugins.hasPlugin('com.android.application')) {
+                  p.android.compileSdkVersion 36
+                }
+              } catch (Throwable t) {
+                println "compileSdk skip: ${p.name}"
+              }
+            }
+          }
+          GRADLE
+
+      - name: アプリ別アイコンを生成
+        continue-on-error: true
+        run: |
+          python3 -c "import PIL" 2>/dev/null || python3 -m pip install --quiet --break-system-packages pillow
+
+      - name: ビルド
+        working-directory: pc98disk-app
+        run: |
+          flutter pub get
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk pc98disk-app.apk
+
+      - name: Releases に公開
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pc98disk-latest
+          name: PC98ディスクビューア (最新)
+          files: pc98disk-app/pc98disk-app.apk
+
+      - name: ntfy 通知（成功）
+        if: success()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: PC98ディスクビューア
+          tag: pc98disk-latest
+          status: success
+
+      - name: ntfy 通知（失敗）
+        if: failure()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: PC98ディスクビューア
+          tag: pc98disk-latest
+          status: failure

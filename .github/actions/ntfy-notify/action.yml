@@ -1,0 +1,40 @@
+name: ntfy-notify
+description: ビルド結果をntfyで通知する（タップでAPKページ/ログへ）。トピック未設定なら何もしない
+inputs:
+  topic:
+    description: ntfyのトピック名（secrets.NTFY_TOPIC を渡す）
+    required: false
+    default: ''
+  app:
+    description: 通知に出すアプリ名
+    required: true
+  tag:
+    description: リリースのタグ名（例 launcher-latest）。成功時のリンク先
+    required: true
+  status:
+    description: success か failure
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TOPIC: ${{ inputs.topic }}
+        APP: ${{ inputs.app }}
+        TAG: ${{ inputs.tag }}
+        STATUS: ${{ inputs.status }}
+        REPO: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+      run: |
+        [ -z "$TOPIC" ] && exit 0
+        if [ "$STATUS" = "success" ]; then
+          title="${APP}のビルド完了"; msg="タップしてAPKのページを開く"
+          click="https://github.com/$REPO/releases/tag/$TAG"; tags='["white_check_mark"]'; prio=3
+        else
+          title="${APP}のビルド失敗"; msg="タップしてログを開く"
+          click="https://github.com/$REPO/actions/runs/$RUN_ID"; tags='["x"]'; prio=4
+        fi
+        jq -n --arg t "$TOPIC" --arg ti "$title" --arg m "$msg" --arg c "$click" \
+          --argjson tags "$tags" --argjson p "$prio" \
+          '{topic:$t,title:$ti,message:$m,click:$c,tags:$tags,priority:$p}' \
+        | curl -sS -d @- https://ntfy.sh

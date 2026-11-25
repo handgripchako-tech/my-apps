@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">リモコン</string>
+    <string name="service_desc">別のスマホからこのスマホの画面を見て、アプリの起動やタップ操作を受け付けます。Tailscale 経由の通信だけ許可します。</string>
+</resources>

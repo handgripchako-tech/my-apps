@@ -1,0 +1,80 @@
+name: build-apk
+
+on:
+  push:
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 署名鍵を復元
+        uses: ./.github/actions/restore-key
+        with:
+          key: ${{ secrets.SIGN_DEBUG }}
+          path: android-app/debug.keystore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        working-directory: android-app
+        run: gradle --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true # 保存容量が満杯でも、リリースは作る
+        with:
+          name: test-server-apk
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: 更新内容を作成
+        uses: ./.github/actions/release-notes
+        with:
+          paths: android-app
+
+      - name: Publish release (latest APK)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk test-server.apk
+          cp test-server.apk test-server-v${{ github.run_number }}.apk
+
+      - uses: ./.github/actions/publish-release
+        with:
+          tag: apk-latest
+          apk: test-server-v${{ github.run_number }}.apk
+          title: 最新のAPK
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ntfy 通知（成功）
+        if: success()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: サーバーアプリ
+          tag: apk-latest
+          status: success
+
+      - name: ntfy 通知（失敗）
+        if: failure()
+        uses: ./.github/actions/ntfy-notify
+        with:
+          topic: ${{ secrets.NTFY_TOPIC }}
+          app: サーバーアプリ
+          tag: apk-latest
+          status: failure
