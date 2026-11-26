@@ -109,3 +109,5 @@ jobs:
           app: 音楽プレーヤー
           tag: music-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

@@ -78,3 +78,5 @@ jobs:
           app: リモコン
           tag: remote-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

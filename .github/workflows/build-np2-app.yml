@@ -144,3 +144,5 @@ jobs:
           app: PC-98エミュ
           tag: np2-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

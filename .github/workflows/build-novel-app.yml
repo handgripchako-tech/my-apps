@@ -111,3 +111,5 @@ jobs:
           app: ノベル
           tag: novel-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

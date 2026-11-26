@@ -109,3 +109,5 @@ jobs:
           app: ギャラリー
           tag: gallery-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

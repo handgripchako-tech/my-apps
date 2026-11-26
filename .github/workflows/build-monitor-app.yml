@@ -111,3 +111,5 @@ jobs:
           app: 監視アプリ
           tag: monitor-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

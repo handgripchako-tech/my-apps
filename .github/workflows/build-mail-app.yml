@@ -106,3 +106,5 @@ jobs:
           app: メーラー
           tag: mail-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う

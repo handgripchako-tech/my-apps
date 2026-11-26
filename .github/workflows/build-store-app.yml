@@ -112,3 +112,5 @@ jobs:
           app: ストア
           tag: store-latest
           status: failure
+
+# ビルドは my-apps（公開リポジトリ）で行う
