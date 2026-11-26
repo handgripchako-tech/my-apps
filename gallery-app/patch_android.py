@@ -48,11 +48,15 @@ OPEN_FILTERS = """<intent-filter>
                 <data android:mimeType="video/*" />
                 <data android:mimeType="application/x-matroska" />
                 <data android:mimeType="application/mp4" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/epub+zip" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="video/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/epub+zip" />
             </intent-filter>
         """
 
@@ -60,23 +64,37 @@ KOTLIN = """package __PKG__
 
 import android.content.ContentUris
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.charset.Charset
+import java.util.concurrent.Executors
+import java.util.zip.ZipFile
 
-// 他のアプリから「開く」「共有」で渡された動画を Flutter 側へ渡す。
+// 他のアプリから「開く」「共有」で渡された動画・PDF・epub を Flutter 側へ渡す。
 // 置き場所(パス)が分かればパスを、分からなければ content:// のまま渡す。
 class MainActivity : AudioServiceActivity() {
     private var channel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "gallery/book")
+            .setMethodCallHandler { call, result -> bookCall(call, result) }
         val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "gallery/intent")
         channel = ch
         ch.setMethodCallHandler { call, result ->
@@ -88,6 +106,125 @@ class MainActivity : AudioServiceActivity() {
                 result.notImplemented()
             }
         }
+    }
+
+    // ---- PDF・epub(zip) の読み取り（重い処理は裏の1本のスレッドで順番に） ----
+    private val bookExec = Executors.newSingleThreadExecutor()
+    private val mainH = Handler(Looper.getMainLooper())
+    private val pdfs = HashMap<Int, Pair<ParcelFileDescriptor, PdfRenderer>>()
+    private var pdfSeq = 0
+    private val zips = HashMap<String, ZipFile>()
+
+    private fun bookCall(call: MethodCall, result: MethodChannel.Result) {
+        bookExec.execute {
+            try {
+                val src = call.argument<String>("src") ?: ""
+                val v: Any? = when (call.method) {
+                    "mime" -> contentResolver.getType(Uri.parse(src))
+                    "name" -> displayName(Uri.parse(src))
+                    "pdfOpen" -> {
+                        val fd = ParcelFileDescriptor.open(localFile(src), ParcelFileDescriptor.MODE_READ_ONLY)
+                        val r = try { PdfRenderer(fd) } catch (e: Exception) { fd.close(); throw e }
+                        val id = ++pdfSeq
+                        pdfs[id] = Pair(fd, r)
+                        mapOf("id" to id, "count" to r.pageCount)
+                    }
+                    "pdfPage" -> {
+                        val r = pdfs[call.argument<Int>("id")!!]?.second ?: throw Exception("PDFが閉じられています")
+                        val page = r.openPage(call.argument<Int>("i")!!)
+                        try {
+                            val w = call.argument<Int>("w")!!
+                            val pw = maxOf(1, page.width)
+                            val ph = maxOf(1, page.height)
+                            var bw = w
+                            var bh = (w.toLong() * ph / pw).toInt()
+                            if (bh > w * 3) { bh = w * 3; bw = maxOf(1, (bh.toLong() * pw / ph).toInt()) }
+                            val bmp = Bitmap.createBitmap(bw, maxOf(1, bh), Bitmap.Config.ARGB_8888)
+                            bmp.eraseColor(Color.WHITE)
+                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            val out = ByteArrayOutputStream()
+                            bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                            bmp.recycle()
+                            out.toByteArray()
+                        } finally {
+                            page.close()
+                        }
+                    }
+                    "pdfClose" -> {
+                        pdfs.remove(call.argument<Int>("id")!!)?.let { it.second.close(); it.first.close() }
+                        null
+                    }
+                    "zipList" -> {
+                        val z = zipOf(src)
+                        z.entries().asSequence().filter { !it.isDirectory }.map { it.name }.toList()
+                    }
+                    "zipRead" -> {
+                        val z = zipOf(src)
+                        val e = z.getEntry(call.argument<String>("name")!!) ?: throw Exception("中にありません")
+                        z.getInputStream(e).use { it.readBytes() }
+                    }
+                    "zipClose" -> {
+                        zips.remove(src)?.close()
+                        null
+                    }
+                    else -> {
+                        mainH.post { result.notImplemented() }
+                        return@execute
+                    }
+                }
+                mainH.post { result.success(v) }
+            } catch (e: Throwable) {
+                mainH.post { result.error("book", e.message ?: e.toString(), null) }
+            }
+        }
+    }
+
+    // zip を開いたまま覚えておく。名前が UTF-8 でない zip は Shift_JIS で開き直す
+    private fun zipOf(src: String): ZipFile {
+        zips[src]?.let { return it }
+        val f = localFile(src)
+        val z = try {
+            val u = ZipFile(f)
+            u.entries().asSequence().forEach { it.name }
+            u
+        } catch (e: Exception) {
+            ZipFile(f, Charset.forName("Shift_JIS"))
+        }
+        while (zips.size >= 3) zips.remove(zips.keys.first())?.close()
+        zips[src] = z
+        return z
+    }
+
+    private fun displayName(uri: Uri): String? {
+        if (uri.scheme != "content") return uri.lastPathSegment
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (i >= 0) return c.getString(i)
+            }
+        }
+        return null
+    }
+
+    // content:// はアプリのキャッシュに写してから読む（最近の3つだけ残す）
+    private fun localFile(src: String): File {
+        if (!src.startsWith("content://")) return File(src)
+        val uri = Uri.parse(src)
+        val dir = File(cacheDir, "book")
+        dir.mkdirs()
+        val name = displayName(uri) ?: "book"
+        val dot = name.lastIndexOf('.')
+        val ext = if (dot > 0) name.substring(dot) else ""
+        val f = File(dir, Integer.toHexString(src.hashCode()) + ext)
+        if (!f.exists() || f.length() == 0L) {
+            val tmp = File(dir, f.name + ".part")
+            contentResolver.openInputStream(uri)!!.use { inp -> tmp.outputStream().use { inp.copyTo(it) } }
+            tmp.renameTo(f)
+        }
+        f.setLastModified(System.currentTimeMillis())
+        dir.listFiles()?.filter { it.name != f.name }?.sortedByDescending { it.lastModified() }
+            ?.drop(2)?.forEach { it.delete() }
+        return f
     }
 
     override fun onNewIntent(intent: Intent) {

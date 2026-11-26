@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:audio_service/audio_service.dart' as asv;
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -105,7 +109,7 @@ class Entry {
 // ---------------------------------------------------------------- 履歴
 
 class HistItem {
-  final String type; // set（書庫・画像フォルダ）/ video
+  final String type; // set（書庫・画像フォルダ）/ video / pdf（サーバーのPDF）/ lbook（端末内のPDF・epub・zip）
   final String path;
   final String title;
   final int page; // set: 最後に見たページ（0始まり）
@@ -765,6 +769,7 @@ Future<void> openExternal(String src) async {
     nav = gNavKey.currentState;
   }
   if (nav == null) return;
+  if (await _openExternalBook(nav, src)) return;
   var vids = <Entry>[];
   var start = 0;
   if (src.startsWith('/')) {
@@ -805,6 +810,373 @@ Future<void> openExternal(String src) async {
       builder: (_) => PlayerPage(videos: list, start: st)));
 }
 
+
+// ---------------------------------------------------------------- PDF・epub・zip（端末内 / サーバーのPDF）
+
+const MethodChannel _bookCh = MethodChannel('gallery/book');
+const Set<String> _bookExts = {'pdf', 'epub', 'zip', 'cbz'};
+const Set<String> _imgExts = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'};
+
+String _extOf(String name) {
+  final b = name.split('/').last;
+  final d = b.lastIndexOf('.');
+  return d <= 0 ? '' : b.substring(d + 1).toLowerCase();
+}
+
+// 自然順（img2 < img10）
+int _natCmp(String a, String b) {
+  final re = RegExp(r'\d+|\D+');
+  final x = re.allMatches(a.toLowerCase()).map((m) => m.group(0)!).toList();
+  final y = re.allMatches(b.toLowerCase()).map((m) => m.group(0)!).toList();
+  for (var i = 0; i < x.length && i < y.length; i++) {
+    final p = int.tryParse(x[i]);
+    final q = int.tryParse(y[i]);
+    final c = (p != null && q != null) ? p.compareTo(q) : x[i].compareTo(y[i]);
+    if (c != 0) return c;
+  }
+  return x.length.compareTo(y.length);
+}
+
+String _dirname(String p) {
+  final i = p.lastIndexOf('/');
+  return i < 0 ? '' : p.substring(0, i);
+}
+
+String _normPath(String p) {
+  final out = <String>[];
+  for (final part in p.split('/')) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..') {
+      if (out.isNotEmpty) out.removeLast();
+    } else {
+      out.add(part);
+    }
+  }
+  return out.join('/');
+}
+
+String _joinPath(String base, String rel) {
+  if (rel.startsWith('/')) return _normPath(rel);
+  return _normPath(base.isEmpty ? rel : '$base/$rel');
+}
+
+String _unq(String s) {
+  try {
+    return Uri.decodeComponent(s);
+  } catch (_) {
+    return s;
+  }
+}
+
+String? _attr(String tag, String name) =>
+    RegExp('\\s$name\\s*=\\s*["\']([^"\']*)["\']').firstMatch(tag)?.group(1);
+
+// PDF のページを描く横幅（画面の長い辺くらい）
+int _pdfWidth() {
+  try {
+    final sz = WidgetsBinding.instance.platformDispatcher.views.first.physicalSize;
+    return math.max(sz.width, sz.height).round().clamp(1200, 2400).toInt();
+  } catch (_) {
+    return 1600;
+  }
+}
+
+abstract class BookSrc {
+  Future<int> open();
+  Future<Uint8List> bytes(int i);
+  Future<void> close();
+}
+
+class PdfBook extends BookSrc {
+  String src;
+  int? id;
+  final int width = _pdfWidth();
+  PdfBook(this.src);
+
+  @override
+  Future<int> open() async {
+    final m = await _bookCh.invokeMapMethod<String, dynamic>('pdfOpen', {'src': src});
+    id = (m!['id'] as num).toInt();
+    return (m['count'] as num).toInt();
+  }
+
+  @override
+  Future<Uint8List> bytes(int i) async {
+    final b = await _bookCh
+        .invokeMethod<Uint8List>('pdfPage', {'id': id, 'i': i, 'w': width});
+    return b!;
+  }
+
+  @override
+  Future<void> close() async {
+    final x = id;
+    id = null;
+    if (x == null) return;
+    try {
+      await _bookCh.invokeMethod<void>('pdfClose', {'id': x});
+    } catch (_) {}
+  }
+}
+
+// サーバーのPDF。一度スマホのキャッシュに落としてから表示する（最近の5冊だけ残す）
+class ServerPdfBook extends PdfBook {
+  final String rel;
+  final ValueNotifier<double> progress = ValueNotifier<double>(0);
+  ServerPdfBook(this.rel) : super('');
+
+  @override
+  Future<int> open() async {
+    src = await _download();
+    return super.open();
+  }
+
+  static int _hash(String s) {
+    var h = 0x811c9dc5;
+    for (final c in utf8.encode(s)) {
+      h = ((h ^ c) * 0x01000193) & 0xffffffff;
+    }
+    return h;
+  }
+
+  Future<String> _download() async {
+    final dir = Directory('${(await getTemporaryDirectory()).path}/pdf');
+    await dir.create(recursive: true);
+    final f = File('${dir.path}/${_hash(rel).toRadixString(16)}.pdf');
+    final uri = gUri('/api/file', {'p': rel});
+    int total = 0;
+    try {
+      final h = await gHttp.head(uri).timeout(const Duration(seconds: 15));
+      if (h.statusCode == 404) throw 'サーバーが対応していません（gallery.py の更新と再起動が必要）';
+      total = int.tryParse(h.headers['content-length'] ?? '') ?? 0;
+    } on String {
+      rethrow;
+    } catch (_) {}
+    if (total > 0 && await f.exists() && await f.length() == total) {
+      await f.setLastModified(DateTime.now());
+      return f.path;
+    }
+    final res = await gHttp
+        .send(http.Request('GET', uri))
+        .timeout(const Duration(seconds: 30));
+    if (res.statusCode != 200) {
+      throw res.statusCode == 404
+          ? 'サーバーが対応していません（gallery.py の更新と再起動が必要）'
+          : 'サーバーから読めません (${res.statusCode})';
+    }
+    final all = res.contentLength ?? total;
+    final tmp = File('${f.path}.part');
+    final sink = tmp.openWrite();
+    var got = 0;
+    try {
+      await for (final c in res.stream) {
+        sink.add(c);
+        got += c.length;
+        if (all > 0) progress.value = got / all;
+      }
+    } finally {
+      await sink.close();
+    }
+    await tmp.rename(f.path);
+    try {
+      final olds = (await dir.list().toList())
+          .whereType<File>()
+          .where((x) => x.path != f.path)
+          .toList()
+        ..sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+      for (final o in olds.skip(4)) {
+        await o.delete();
+      }
+    } catch (_) {}
+    return f.path;
+  }
+}
+
+// zip / cbz / epub（中の画像を順に見せる）
+class ZipBook extends BookSrc {
+  final String src;
+  final bool epub;
+  List<String> names = [];
+  ZipBook(this.src, {this.epub = false});
+
+  Future<Uint8List> read(String name) async {
+    final b = await _bookCh
+        .invokeMethod<Uint8List>('zipRead', {'src': src, 'name': name});
+    return b!;
+  }
+
+  @override
+  Future<int> open() async {
+    final all =
+        await _bookCh.invokeListMethod<String>('zipList', {'src': src}) ?? [];
+    final imgs = all.where((n) {
+      final l = n.toLowerCase();
+      if (l.contains('__macosx/') || l.split('/').last.startsWith('._')) {
+        return false;
+      }
+      return _imgExts.contains(_extOf(l));
+    }).toList()
+      ..sort(_natCmp);
+    if (epub) {
+      final rank = await _epubRank();
+      if (rank.isNotEmpty) {
+        final big = rank.length;
+        imgs.sort((a, b) {
+          final c = (rank[a] ?? big).compareTo(rank[b] ?? big);
+          return c != 0 ? c : _natCmp(a, b);
+        });
+      }
+    }
+    names = imgs;
+    if (imgs.isEmpty) {
+      throw epub ? '画像がありません（文字だけのepubには未対応です）' : '画像がありません';
+    }
+    return imgs.length;
+  }
+
+  // epub は本文(spine)の順に画像を並べる
+  Future<Map<String, int>> _epubRank() async {
+    final rank = <String, int>{};
+    try {
+      final cont = utf8.decode(await read('META-INF/container.xml'),
+          allowMalformed: true);
+      final m = RegExp('<(?:\\w+:)?rootfile\\b[^>]*>').firstMatch(cont);
+      final opfPath = m == null ? null : _attr(m.group(0)!, 'full-path');
+      if (opfPath == null) return rank;
+      final opf = utf8.decode(await read(opfPath), allowMalformed: true);
+      final base = _dirname(opfPath);
+      final man = <String, String>{};
+      for (final it in RegExp('<(?:\\w+:)?item\\b[^>]*>').allMatches(opf)) {
+        final tag = it.group(0)!;
+        final id = _attr(tag, 'id');
+        final href = _attr(tag, 'href');
+        if (id != null && href != null) man[id] = _joinPath(base, _unq(href));
+      }
+      final refRe = RegExp('(?:src|xlink:href|href)\\s*=\\s*["\']([^"\'#]+)["\']');
+      for (final it in RegExp('<(?:\\w+:)?itemref\\b[^>]*>').allMatches(opf)) {
+        final idref = _attr(it.group(0)!, 'idref');
+        final doc = idref == null ? null : man[idref];
+        if (doc == null) continue;
+        if (_imgExts.contains(_extOf(doc))) {
+          rank.putIfAbsent(doc, () => rank.length);
+          continue;
+        }
+        String html;
+        try {
+          html = utf8.decode(await read(doc), allowMalformed: true);
+        } catch (_) {
+          continue;
+        }
+        final d = _dirname(doc);
+        for (final r in refRe.allMatches(html)) {
+          final ref = _joinPath(d, _unq(r.group(1)!));
+          if (_imgExts.contains(_extOf(ref))) {
+            rank.putIfAbsent(ref, () => rank.length);
+          }
+        }
+      }
+    } catch (_) {}
+    return rank;
+  }
+
+  @override
+  Future<Uint8List> bytes(int i) => read(names[i]);
+
+  @override
+  Future<void> close() async {
+    try {
+      await _bookCh.invokeMethod<void>('zipClose', {'src': src});
+    } catch (_) {}
+  }
+}
+
+// PhotoView に渡す画像（ページの中身は BookSrc から読む）
+class BookImage extends ImageProvider<BookImage> {
+  final BookSrc src;
+  final int i;
+  const BookImage(this.src, this.i);
+
+  @override
+  Future<BookImage> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture<BookImage>(this);
+
+  @override
+  ImageStreamCompleter loadImage(BookImage key, ImageDecoderCallback decode) =>
+      MultiFrameImageStreamCompleter(codec: _load(decode), scale: 1.0);
+
+  Future<ui.Codec> _load(ImageDecoderCallback decode) async {
+    final b = await src.bytes(i);
+    return decode(await ui.ImmutableBuffer.fromUint8List(b));
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is BookImage && identical(other.src, src) && other.i == i;
+
+  @override
+  int get hashCode => Object.hash(identityHashCode(src), i);
+}
+
+BookSrc _bookFor(String src, String title) {
+  var e = _extOf(title);
+  if (!_bookExts.contains(e)) e = _extOf(src);
+  return e == 'pdf' ? PdfBook(src) : ZipBook(src, epub: e == 'epub');
+}
+
+// 端末内の PDF・epub・zip を開く（前回のページから）
+Future<void> openLocalBook(NavigatorState nav, String src, String title) async {
+  final h = await Hist.find('lbook', src);
+  final sp = h?.page ?? 0;
+  await nav.push(MaterialPageRoute<dynamic>(
+      builder: (_) => ViewerPage(
+          setPath: src,
+          start: sp,
+          title: title,
+          resumed: sp > 0,
+          book: _bookFor(src, title),
+          histType: 'lbook')));
+}
+
+// サーバーの PDF を開く
+Future<void> openServerPdf(NavigatorState nav, String rel, String title) async {
+  final h = await Hist.find('pdf', rel);
+  final sp = h?.page ?? 0;
+  await nav.push(MaterialPageRoute<dynamic>(
+      builder: (_) => ViewerPage(
+          setPath: rel,
+          start: sp,
+          title: title,
+          resumed: sp > 0,
+          book: ServerPdfBook(rel),
+          histType: 'pdf')));
+}
+
+// 他のアプリから渡されたものが PDF・epub なら開いて true
+Future<bool> _openExternalBook(NavigatorState nav, String src) async {
+  var title = src.split('/').last;
+  var ext = _extOf(src);
+  if (src.startsWith('content://')) {
+    try {
+      final n = await _bookCh.invokeMethod<String>('name', {'src': src});
+      if (n != null && n.isNotEmpty) title = n;
+    } catch (_) {}
+    ext = _extOf(title);
+    if (!_bookExts.contains(ext)) {
+      try {
+        final mt = await _bookCh.invokeMethod<String>('mime', {'src': src});
+        if (mt == 'application/pdf') ext = 'pdf';
+        if (mt == 'application/epub+zip') ext = 'epub';
+      } catch (_) {}
+      if (ext == 'pdf' || ext == 'epub') title = '$title.$ext';
+    }
+  } else {
+    title = _unq(title);
+  }
+  if (ext != 'pdf' && ext != 'epub') return false;
+  if (src.startsWith('/')) await ensureLocalAccess();
+  await openLocalBook(nav, src, title);
+  return true;
+}
+
 // ---------------------------------------------------------------- 端末内の動画
 
 const String _localRoot = '/storage/emulated/0';
@@ -839,6 +1211,7 @@ class LocalBrowsePage extends StatefulWidget {
 class _LocalBrowsePageState extends State<LocalBrowsePage> {
   List<Entry>? dirs;
   List<Entry>? vids;
+  List<Entry> books = [];
   String? error;
 
   String get title {
@@ -860,6 +1233,7 @@ class _LocalBrowsePageState extends State<LocalBrowsePage> {
       }
       final ds = <Entry>[];
       final vs = <Entry>[];
+      final bs = <Entry>[];
       await for (final f in Directory(widget.dir).list(followLinks: false)) {
         final name = f.path.split('/').last;
         if (name.startsWith('.')) continue;
@@ -874,9 +1248,11 @@ class _LocalBrowsePageState extends State<LocalBrowsePage> {
           ds.add(Entry(name, 'dir', f.path, 0, mt));
         } else if (f is File) {
           final dot = name.lastIndexOf('.');
-          if (dot > 0 &&
-              _videoExts.contains(name.substring(dot + 1).toLowerCase())) {
+          final ext = dot > 0 ? name.substring(dot + 1).toLowerCase() : '';
+          if (_videoExts.contains(ext)) {
             vs.add(Entry(name, 'video', f.path, st.size, mt));
+          } else if (_bookExts.contains(ext)) {
+            bs.add(Entry(name, 'book', f.path, st.size, mt));
           }
         }
       }
@@ -889,10 +1265,12 @@ class _LocalBrowsePageState extends State<LocalBrowsePage> {
 
       ds.sort(cmp);
       vs.sort(cmp);
+      bs.sort(cmp);
       if (!mounted) return;
       setState(() {
         dirs = ds;
         vids = vs;
+        books = bs;
         error = null;
       });
     } catch (e) {
@@ -922,13 +1300,28 @@ class _LocalBrowsePageState extends State<LocalBrowsePage> {
     }
     final ds = dirs!;
     final vs = vids!;
-    if (ds.isEmpty && vs.isEmpty) {
-      return const Center(child: Text('動画もフォルダもありません'));
+    final bs = books;
+    if (ds.isEmpty && vs.isEmpty && bs.isEmpty) {
+      return const Center(child: Text('動画・本・フォルダがありません'));
     }
     return ListView.builder(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom + 8),
-      itemCount: ds.length + vs.length,
+      itemCount: ds.length + vs.length + bs.length,
       itemBuilder: (context, i) {
+        if (i >= ds.length + vs.length) {
+          final e = bs[i - ds.length - vs.length];
+          return ListTile(
+            leading: Icon(
+                _extOf(e.name) == 'pdf' ? Icons.picture_as_pdf : Icons.menu_book,
+                color: Colors.lightBlueAccent),
+            title: Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text(_fmtBytes(e.size), style: const TextStyle(fontSize: 11)),
+            onTap: () async {
+              await openLocalBook(Navigator.of(context), e.path, e.name);
+              if (mounted) load();
+            },
+          );
+        }
         if (i < ds.length) {
           final e = ds[i];
           return ListTile(
@@ -1153,6 +1546,10 @@ class _BrowsePageState extends State<BrowsePage> {
     } else if (e.type == 'image') {
       page = ViewerPage(
           setPath: widget.path, start: images.indexOf(e), title: widget.title);
+    } else if (e.type == 'pdf') {
+      await openServerPdf(Navigator.of(context), e.path, e.name);
+      if (mounted) load();
+      return;
     } else if (e.type == 'archive') {
       // 前回の続きから開く
       final h = await Hist.find('set', e.path);
@@ -1318,6 +1715,10 @@ class _BrowsePageState extends State<BrowsePage> {
       }).toString();
     } else if (e.type == 'archive') {
       url = gUri('/img', {'p': e.path, 'i': '${e.cover}', 'v': 't'}).toString();
+    }
+    if (e.type == 'pdf') {
+      return const Center(
+          child: Icon(Icons.picture_as_pdf, size: 48, color: Colors.redAccent));
     }
     if (url == null) {
       return const Center(
@@ -1903,12 +2304,16 @@ class ViewerPage extends StatefulWidget {
   final String title;
   final int start;
   final bool resumed; // 前回の続きから開いたか
+  final BookSrc? book; // PDF・epub・端末内の書庫（null ならサーバーの画像）
+  final String histType; // 履歴の種類: set / pdf / lbook
   const ViewerPage({
     super.key,
     required this.setPath,
     required this.start,
     required this.title,
     this.resumed = false,
+    this.book,
+    this.histType = 'set',
   });
 
   @override
@@ -1959,6 +2364,7 @@ class _ViewerPageState extends State<ViewerPage> {
     histTimer?.cancel();
     saveHist(now: true);
     pc.dispose();
+    widget.book?.close();
     if (!replacing) SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -1970,7 +2376,7 @@ class _ViewerPageState extends State<ViewerPage> {
       final c = count;
       if (gone || c == null || c == 0) return;
       Hist.put(HistItem(
-        type: 'set',
+        type: widget.histType,
         path: widget.setPath,
         title: widget.title,
         page: cur,
@@ -1997,10 +2403,22 @@ class _ViewerPageState extends State<ViewerPage> {
 
   Future<void> loadCount() async {
     try {
-      final j = await getJson('/api/set', {'p': widget.setPath})
-          as Map<String, dynamic>;
-      if (!mounted) return;
-      setState(() => applySet(j));
+      final b = widget.book;
+      if (b != null) {
+        final n = await b.open();
+        if (!mounted) return;
+        setState(() {
+          count = n;
+          kind = 'book';
+          names = [];
+          nextPath = null;
+        });
+      } else {
+        final j = await getJson('/api/set', {'p': widget.setPath})
+            as Map<String, dynamic>;
+        if (!mounted) return;
+        setState(() => applySet(j));
+      }
       final c = count ?? 0;
       if (c > 0 && cur >= c) {
         cur = c - 1;
@@ -2066,7 +2484,41 @@ class _ViewerPageState extends State<ViewerPage> {
     await prefs.setBool('rtl', gRtl);
   }
 
+  // PDF・epub などを丸ごと削除（サーバーのPDF / 端末内のファイル）
+  Future<void> deleteBook() async {
+    final local = widget.histType == 'lbook';
+    if (local && !widget.setPath.startsWith('/')) {
+      showMsg(context, '他のアプリから開いたファイルは削除できません');
+      return;
+    }
+    final ok = await confirmDelete(
+        context, widget.title, 'このファイルを完全に削除します。元に戻せません。');
+    if (!ok || !mounted) return;
+    String? msg;
+    if (local) {
+      try {
+        await widget.book?.close();
+        await File(widget.setPath).delete();
+      } catch (e) {
+        msg = '削除できませんでした: $e';
+      }
+    } else {
+      msg = await deleteOnServer(widget.setPath);
+      gListCache.clear();
+    }
+    if (!mounted) return;
+    if (msg != null) {
+      showMsg(context, msg);
+      return;
+    }
+    gone = true;
+    await Hist.remove(widget.histType, widget.setPath);
+    if (!mounted) return;
+    Navigator.pop(context, true);
+  }
+
   Future<void> deleteCurrent() async {
+    if (widget.book != null) return deleteBook();
     final isDir = kind == 'dir';
     if (isDir && cur >= names.length) {
       showMsg(context, 'サーバーの更新が必要です（画像の名前が取れません）');
@@ -2122,10 +2574,16 @@ class _ViewerPageState extends State<ViewerPage> {
           '/img', {'p': widget.setPath, 'i': '$i', 'v': v, 'r': '$gRev'})
       .toString();
 
+  ImageProvider provider(int i) {
+    final b = widget.book;
+    if (b != null) return BookImage(b, i);
+    return CachedNetworkImageProvider(url(i, 'm'));
+  }
+
   void preload(int from) {
     final c = count ?? 0;
     for (var k = from; k < from + 3 && k < c; k++) {
-      precacheImage(CachedNetworkImageProvider(url(k, 'm')), context);
+      precacheImage(provider(k), context, onError: (_, __) {});
     }
   }
 
@@ -2279,7 +2737,7 @@ class _ViewerPageState extends State<ViewerPage> {
           loadingBuilder: (context, event) =>
               const Center(child: CircularProgressIndicator()),
           builder: (context, i) => PhotoViewGalleryPageOptions(
-            imageProvider: CachedNetworkImageProvider(url(i, 'm')),
+            imageProvider: provider(i),
             minScale: PhotoViewComputedScale.contained,
             initialScale: PhotoViewComputedScale.contained,
             maxScale: PhotoViewComputedScale.contained * 6,
@@ -2304,9 +2762,22 @@ class _ViewerPageState extends State<ViewerPage> {
     }
     final c = count;
     if (c == null) {
-      return const Scaffold(
+      final b = widget.book;
+      return Scaffold(
           backgroundColor: Colors.black,
-          body: Center(child: CircularProgressIndicator()));
+          body: Center(
+              child: b is ServerPdfBook
+                  ? ValueListenableBuilder<double>(
+                      valueListenable: b.progress,
+                      builder: (_, v, __) => Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const CircularProgressIndicator(),
+                              const SizedBox(height: 16),
+                              Text('PDFを読み込み中… ${(v * 100).round()}%'),
+                            ],
+                          ))
+                  : const CircularProgressIndicator()));
     }
     final seek = seekVal ?? cur.toDouble();
     return Scaffold(
@@ -2328,7 +2799,7 @@ class _ViewerPageState extends State<ViewerPage> {
                       onPressed: () => Navigator.of(context).pop()),
                   Text('${cur + 1} / $c'),
                   const Spacer(),
-                  if (kind != 'dir')
+                  if (kind != 'dir' && widget.book == null)
                     IconButton(
                         tooltip: 'このページを表紙にする',
                         icon: const Icon(Icons.photo_album_outlined),
@@ -2429,6 +2900,14 @@ class _HistoryPageState extends State<HistoryPage> {
     if (h.type == 'video') {
       page = PlayerPage(
           videos: [Entry(h.title, 'video', h.path, 0, 0)], start: 0);
+    } else if (h.type == 'pdf') {
+      await openServerPdf(Navigator.of(context), h.path, h.title);
+      if (mounted) load();
+      return;
+    } else if (h.type == 'lbook') {
+      await openLocalBook(Navigator.of(context), h.path, h.title);
+      if (mounted) load();
+      return;
     } else {
       page = ViewerPage(
           setPath: h.path, start: h.page, title: h.title, resumed: h.page > 0);
@@ -2456,8 +2935,11 @@ class _HistoryPageState extends State<HistoryPage> {
                         ? '再生位置 ${fmt(Duration(milliseconds: h.pos))} ・ ${fmtTime(h.ts)}'
                         : '${h.page + 1} / ${h.count} ページ ・ ${fmtTime(h.ts)}';
                     return ListTile(
-                      leading:
-                          Icon(h.type == 'video' ? Icons.videocam : Icons.collections),
+                      leading: Icon(h.type == 'video'
+                          ? Icons.videocam
+                          : h.type == 'pdf' || h.type == 'lbook'
+                              ? Icons.menu_book
+                              : Icons.collections),
                       title: Text(h.title, maxLines: 2, overflow: TextOverflow.ellipsis),
                       subtitle: Text(sub),
                       trailing: IconButton(
