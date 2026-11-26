@@ -1,0 +1,300 @@
+[arm64-v8a] Compile        : retro <= f64_to_i64.c
+[arm64-v8a] Compile        : retro <= f64_to_ui32.c
+[arm64-v8a] Compile        : retro <= f64_to_ui32_r_minMag.c
+[arm64-v8a] Compile        : retro <= f64_to_ui64.c
+[arm64-v8a] Compile        : retro <= f64_to_ui64_r_minMag.c
+[arm64-v8a] Compile        : retro <= i32_to_extF80.c
+[arm64-v8a] Compile        : retro <= i32_to_extF80M.c
+[arm64-v8a] Compile        : retro <= i32_to_f128M.c
+[arm64-v8a] Compile        : retro <= i32_to_f128.c
+[arm64-v8a] Compile        : retro <= i32_to_f16.c
+[arm64-v8a] Compile        : retro <= i32_to_f32.c
+[arm64-v8a] Compile        : retro <= i32_to_f64.c
+[arm64-v8a] Compile        : retro <= i64_to_extF80.c
+[arm64-v8a] Compile        : retro <= i64_to_extF80M.c
+[arm64-v8a] Compile        : retro <= i64_to_f128M.c
+[arm64-v8a] Compile        : retro <= i64_to_f128.c
+[arm64-v8a] Compile        : retro <= cirrus_vga.c
+/home/runner/work/my-apps/my-apps/np2kai/jni/../wab/cirrus_vga.c:2909:4: warning: expression result unused [-Wunused-value]
+ 2909 |                         *s->cirrus_srcptr++;
+      |                         ^~~~~~~~~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../wab/cirrus_vga.c:3119:9: warning: logical not is only applied to the left hand side of this bitwise operator [-Wlogical-not-parentheses]
+ 3119 |     if (!s->sr[0x12] & CIRRUS_CURSOR_SHOW) {
+      |         ^            ~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../wab/cirrus_vga.c:3119:9: note: add parentheses after the '!' to evaluate the bitwise operator first
+ 3119 |     if (!s->sr[0x12] & CIRRUS_CURSOR_SHOW) {
+      |         ^                                
+      |          (                               )
+/home/runner/work/my-apps/my-apps/np2kai/jni/../wab/cirrus_vga.c:3119:9: note: add parentheses around left hand side expression to silence this warning
+ 3119 |     if (!s->sr[0x12] & CIRRUS_CURSOR_SHOW) {
+      |         ^
+      |         (           )
+2 warnings generated.
+[arm64-v8a] Compile        : retro <= i64_to_f64.c
+[arm64-v8a] Compile        : retro <= i64_to_f32.c
+[arm64-v8a] Compile        : retro <= i64_to_f16.c
+[arm64-v8a] Compile        : retro <= s_add128.c
+[arm64-v8a] Compile        : retro <= s_add256M.c
+[arm64-v8a] Compile        : retro <= s_addMagsExtF80.c
+[arm64-v8a] Compile        : retro <= s_addMagsF128.c
+[arm64-v8a] Compile        : retro <= s_addMagsF32.c
+[arm64-v8a] Compile        : retro <= s_addMagsF16.c
+[arm64-v8a] Compile        : retro <= s_approxRecip32_1.c
+[arm64-v8a] Compile        : retro <= s_addMagsF64.c
+[arm64-v8a] Compile        : retro <= s_approxRecipSqrt_1Ks.c
+[arm64-v8a] Compile        : retro <= s_approxRecipSqrt32_1.c
+[arm64-v8a] Compile        : retro <= s_approxRecip_1Ks.c
+[arm64-v8a] Compile        : retro <= s_commonNaNToExtF80UI.c
+[arm64-v8a] Compile        : retro <= s_commonNaNToF16UI.c
+[arm64-v8a] Compile        : retro <= s_commonNaNToF128UI.c
+[arm64-v8a] Compile        : retro <= s_commonNaNToF32UI.c
+[arm64-v8a] Compile        : retro <= s_commonNaNToF64UI.c
+[arm64-v8a] Compile        : retro <= s_countLeadingZeros32.c
+[arm64-v8a] Compile        : retro <= s_countLeadingZeros16.c
+[arm64-v8a] Compile        : retro <= s_countLeadingZeros64.c
+[arm64-v8a] Compile        : retro <= s_countLeadingZeros8.c
+[arm64-v8a] Compile        : retro <= s_eq128.c
+[arm64-v8a] Compile        : retro <= s_extF80UIToCommonNaN.c
+[arm64-v8a] Compile        : retro <= s_f128UIToCommonNaN.c
+[arm64-v8a] Compile        : retro <= s_f32UIToCommonNaN.c
+[arm64-v8a] Compile        : retro <= s_f16UIToCommonNaN.c
+[arm64-v8a] Compile        : retro <= s_f64UIToCommonNaN.c
+[arm64-v8a] Compile        : retro <= s_le128.c
+[arm64-v8a] Compile        : retro <= s_lt128.c
+[arm64-v8a] Compile        : retro <= s_mul128By32.c
+[arm64-v8a] Compile        : retro <= s_mul64ByShifted32To128.c
+[arm64-v8a] Compile        : retro <= s_mul128To256M.c
+[arm64-v8a] Compile        : retro <= s_mul64To128.c
+[arm64-v8a] Compile        : retro <= s_mulAddF16.c
+[arm64-v8a] Compile        : retro <= s_mulAddF32.c
+[arm64-v8a] Compile        : retro <= s_mulAddF128.c
+[arm64-v8a] Compile        : retro <= s_mulAddF64.c
+[arm64-v8a] Compile        : retro <= s_normRoundPackToExtF80.c
+[arm64-v8a] Compile        : retro <= s_normRoundPackToF128.c
+[arm64-v8a] Compile        : retro <= s_normRoundPackToF16.c
+[arm64-v8a] Compile        : retro <= s_normRoundPackToF64.c
+[arm64-v8a] Compile        : retro <= s_normRoundPackToF32.c
+[arm64-v8a] Compile        : retro <= s_normSubnormalExtF80Sig.c
+[arm64-v8a] Compile        : retro <= s_normSubnormalF128Sig.c
+[arm64-v8a] Compile        : retro <= s_normSubnormalF16Sig.c
+[arm64-v8a] Compile        : retro <= s_normSubnormalF32Sig.c
+[arm64-v8a] Compile        : retro <= s_normSubnormalF64Sig.c
+[arm64-v8a] Compile        : retro <= s_propagateNaNExtF80UI.c
+[arm64-v8a] Compile        : retro <= s_propagateNaNF16UI.c
+[arm64-v8a] Compile        : retro <= s_propagateNaNF32UI.c
+[arm64-v8a] Compile        : retro <= s_propagateNaNF128UI.c
+[arm64-v8a] Compile        : retro <= s_propagateNaNF64UI.c
+[arm64-v8a] Compile        : retro <= s_roundPackToF16.c
+[arm64-v8a] Compile        : retro <= s_roundPackToF128.c
+[arm64-v8a] Compile        : retro <= s_roundPackToF32.c
+[arm64-v8a] Compile        : retro <= s_roundPackToExtF80.c
+[arm64-v8a] Compile        : retro <= s_roundToI16.c
+[arm64-v8a] Compile        : retro <= s_roundPackToF64.c
+[arm64-v8a] Compile        : retro <= s_roundToI64.c
+[arm64-v8a] Compile        : retro <= s_roundToI32.c
+[arm64-v8a] Compile        : retro <= s_shiftRightJam128.c
+[arm64-v8a] Compile        : retro <= s_roundToUI32.c
+[arm64-v8a] Compile        : retro <= s_roundToUI64.c
+[arm64-v8a] Compile        : retro <= s_shiftRightJam128Extra.c
+[arm64-v8a] Compile        : retro <= s_shiftRightJam32.c
+[arm64-v8a] Compile        : retro <= s_shiftRightJam64.c
+[arm64-v8a] Compile        : retro <= s_shiftRightJam64Extra.c
+[arm64-v8a] Compile        : retro <= s_shiftRightJam256M.c
+[arm64-v8a] Compile        : retro <= s_shortShiftLeft128.c
+[arm64-v8a] Compile        : retro <= s_shortShiftRight128.c
+[arm64-v8a] Compile        : retro <= s_shortShiftRightJam128.c
+[arm64-v8a] Compile        : retro <= s_shortShiftRightJam128Extra.c
+[arm64-v8a] Compile        : retro <= s_shortShiftRightJam64.c
+[arm64-v8a] Compile        : retro <= s_sub128.c
+[arm64-v8a] Compile        : retro <= s_shortShiftRightJam64Extra.c
+[arm64-v8a] Compile        : retro <= s_sub256M.c
+[arm64-v8a] Compile        : retro <= s_subMagsExtF80.c
+[arm64-v8a] Compile        : retro <= s_subMagsF128.c
+[arm64-v8a] Compile        : retro <= s_subMagsF16.c
+[arm64-v8a] Compile        : retro <= s_subMagsF32.c
+[arm64-v8a] Compile        : retro <= softfloat_raiseFlags.c
+[arm64-v8a] Compile        : retro <= softfloat_state.c
+[arm64-v8a] Compile        : retro <= s_subMagsF64.c
+[arm64-v8a] Compile        : retro <= ui32_to_extF80.c
+[arm64-v8a] Compile        : retro <= ui32_to_extF80M.c
+[arm64-v8a] Compile        : retro <= ui32_to_f128.c
+[arm64-v8a] Compile        : retro <= ui32_to_f128M.c
+[arm64-v8a] Compile        : retro <= ui32_to_f32.c
+[arm64-v8a] Compile        : retro <= ui32_to_f16.c
+[arm64-v8a] Compile        : retro <= ui32_to_f64.c
+[arm64-v8a] Compile        : retro <= ui64_to_extF80.c
+[arm64-v8a] Compile        : retro <= ui64_to_extF80M.c
+[arm64-v8a] Compile        : retro <= ui64_to_f128.c
+[arm64-v8a] Compile        : retro <= ui64_to_f128M.c
+[arm64-v8a] Compile        : retro <= ui64_to_f16.c
+[arm64-v8a] Compile        : retro <= ui64_to_f64.c
+[arm64-v8a] Compile        : retro <= ui64_to_f32.c
+[arm64-v8a] Compile        : retro <= 3dnow.c
+[arm64-v8a] Compile        : retro <= sse3.c
+[arm64-v8a] Compile        : retro <= mmx.c
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:221:11: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  221 |                 srcreg2 = srcregbuf.w;
+      |                         ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:273:11: warning: assigning to 'INT32 *' (aka 'int *') from 'UINT32[2]' (aka 'unsigned int[2]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  273 |                 srcreg2 = srcregbuf.d;
+      |                         ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:326:11: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  326 |                 srcreg2 = srcregbuf.w;
+      |                         ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:467:10: warning: assigning to 'INT8 *' (aka 'signed char *') from 'UINT8[8]' (aka 'unsigned char[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  467 |                 srcreg = srcregbuf.b;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:504:10: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  504 |                 srcreg = srcregbuf.w;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:837:10: warning: assigning to 'INT8 *' (aka 'signed char *') from 'UINT8[8]' (aka 'unsigned char[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  837 |                 srcreg = srcregbuf.b;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:871:10: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  871 |                 srcreg = srcregbuf.w;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:905:10: warning: assigning to 'INT32 *' (aka 'int *') from 'UINT32[2]' (aka 'unsigned int[2]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  905 |                 srcreg = srcregbuf.d;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:942:10: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  942 |                 srcreg = srcregbuf.w;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:976:10: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+  976 |                 srcreg = srcregbuf.w;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:1006:10: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1006 |                 srcreg = srcregbuf.w;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:1523:10: warning: assigning to 'INT8 *' (aka 'signed char *') from 'UINT8[8]' (aka 'unsigned char[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1523 |                 srcreg = srcregbuf.b;
+      |                        ^ ~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/mmx/mmx.c:1560:10: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[4]' (aka 'unsigned short[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1560 |                 srcreg = srcregbuf.w;
+      |                        ^ ~~~~~~~~~~~
+13 warnings generated.
+[arm64-v8a] Compile        : retro <= sse.c
+[arm64-v8a] Compile        : retro <= ssse3.c
+[arm64-v8a] Compile        : retro <= sse4a.c
+[arm64-v8a] Compile        : retro <= sse4_2.c
+[arm64-v8a] Compile        : retro <= compat_strcasestr.c
+[arm64-v8a] Compile        : retro <= sse2.c
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/sse2/sse2.c:1227:11: warning: assigning to 'INT32 *' (aka 'int *') from 'UINT32[4]' (aka 'unsigned int[4]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1227 |                 srcreg2 = srcreg2buf.d;
+      |                         ^ ~~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/sse2/sse2.c:1282:11: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[8]' (aka 'unsigned short[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1282 |                 srcreg2 = srcreg2buf.w;
+      |                         ^ ~~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/sse2/sse2.c:1337:11: warning: assigning to 'INT16 *' (aka 'short *') from 'UINT16[8]' (aka 'unsigned short[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1337 |                 srcreg2 = srcreg2buf.w;
+      |                         ^ ~~~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/sse2/sse2.c:1848:9: warning: assigning to 'SINT16 *' (aka 'short *') from 'UINT16[8]' (aka 'unsigned short[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1848 |                 data2 = data2buf.w;
+      |                       ^ ~~~~~~~~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/sse2/sse2.c:1879:9: warning: assigning to 'SINT16 *' (aka 'short *') from 'UINT16[8]' (aka 'unsigned short[8]') converts between pointers to integer types with different sign [-Wpointer-sign]
+ 1879 |                 data2 = data2buf.w;
+      |                       ^ ~~~~~~~~~~
+5 warnings generated.
+[arm64-v8a] Compile        : retro <= compat_fnmatch.c
+[arm64-v8a] Compile        : retro <= sse4_1.c
+/home/runner/work/my-apps/my-apps/np2kai/jni/../i386c/ia32/instructions/sse4/sse4_1.c:28:32: warning: unknown warning group '-Wstringop-overflow', ignored [-Wunknown-warning-option]
+   28 | #pragma GCC diagnostic ignored "-Wstringop-overflow"
+      |                                ^
+1 warning generated.
+[arm64-v8a] Compile        : retro <= compat_snprintf.c
+[arm64-v8a] Compile        : retro <= compat_posix_string.c
+[arm64-v8a] Compile        : retro <= compat_vscprintf.c
+[arm64-v8a] Compile        : retro <= compat_getopt.c
+[arm64-v8a] Compile        : retro <= compat_strl.c
+[arm64-v8a] Compile        : retro <= fopen_utf8.c
+[arm64-v8a] Compile        : retro <= libretro.c
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sdl/libretro/libretro.c:287:31: warning: format specifies type 'int' but the argument has type 'size_t' (aka 'unsigned long') [-Wformat]
+  287 |       printf("argl_%d:%d\n",i,strlen(xargv_cmd[i]));
+      |                       ~~      ^~~~~~~~~~~~~~~~~~~~
+      |                       %zu
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sdl/libretro/libretro.c:409:1: warning: 'static' ignored on this declaration [-Wmissing-declarations]
+  409 | static enum {
+      | ^
+2 warnings generated.
+[arm64-v8a] Compile        : retro <= encoding_crc32.c
+[arm64-v8a] Compile        : retro <= features_cpu.c
+[arm64-v8a] Compile        : retro <= encoding_utf.c
+[arm64-v8a] Compile        : retro <= config_file_userdata.c
+[arm64-v8a] Compile        : retro <= retro_dirent.c
+[arm64-v8a] Compile        : retro <= file_path_io.c
+[arm64-v8a] Compile        : retro <= nbio_orbis.c
+[arm64-v8a] Compile        : retro <= nbio_intf.c
+[arm64-v8a] Compile        : retro <= file_path.c
+[arm64-v8a] Compile        : retro <= nbio_windowsmmap.c
+[arm64-v8a] Compile        : retro <= nbio_unixmmap.c
+[arm64-v8a] Compile        : retro <= nbio_stdio.c
+[arm64-v8a] Compile        : retro <= config_file.c
+[arm64-v8a] Compile        : retro <= rbmp_encode.c
+[arm64-v8a] Compile        : retro <= jsonsax.c
+[arm64-v8a] Compile        : retro <= libchdr_bitstream.c
+[arm64-v8a] Compile        : retro <= libchdr_cdrom.c
+[arm64-v8a] Compile        : retro <= rbmp.c
+[arm64-v8a] Compile        : retro <= libchdr_chd.c
+[arm64-v8a] Compile        : retro <= libchdr_huffman.c
+[arm64-v8a] Compile        : retro <= jsonsax_full.c
+[arm64-v8a] Compile        : retro <= rpng.c
+[arm64-v8a] Compile        : retro <= rwav.c
+[arm64-v8a] Compile        : retro <= rtga.c
+[arm64-v8a] Compile        : retro <= rpng_encode.c
+[arm64-v8a] Compile        : retro <= dir_list.c
+[arm64-v8a] Compile        : retro <= vector_list.c
+[arm64-v8a] Compile        : retro <= file_list.c
+[arm64-v8a] Compile        : retro <= string_list.c
+[arm64-v8a] Compile        : retro <= chd_stream.c
+[arm64-v8a] Compile        : retro <= file_stream_transforms.c
+[arm64-v8a] Compile        : retro <= rjpeg.c
+[arm64-v8a] Compile        : retro <= memory_stream.c
+[arm64-v8a] Compile        : retro <= stdin_stream.c
+[arm64-v8a] Compile        : retro <= interface_stream.c
+[arm64-v8a] Compile        : retro <= file_stream.c
+[arm64-v8a] Compile        : retro <= trans_stream.c
+[arm64-v8a] Compile        : retro <= trans_stream_pipe.c
+[arm64-v8a] Compile        : retro <= rthreads.c
+[arm64-v8a] Compile        : retro <= stdstring.c
+[arm64-v8a] Compile        : retro <= vfs_implementation.c
+[arm64-v8a] Compile++      : retro <= fmgen_file.cpp
+[arm64-v8a] Compile++      : retro <= fmgen_fmgwrap.cpp
+[arm64-v8a] Compile++      : retro <= fmgen_fmtimer.cpp
+[arm64-v8a] Compile++      : retro <= fmgen_opm.cpp
+[arm64-v8a] Compile++      : retro <= fmgen_psg.cpp
+[arm64-v8a] Compile++      : retro <= fmgen_fmgen.cpp
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sound/fmgen/fmgen_fmgen.cpp:6:32: warning: unknown warning group '-Wmaybe-uninitialized', ignored [-Wunknown-warning-option]
+    6 | #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+      |                                ^
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sound/fmgen/fmgen_fmgen.cpp:857:79: warning: operator '?:' has lower precedence than '|'; '|' will be evaluated first [-Wbitwise-conditional-parentheses]
+  857 |         int lfo = op[0].ms_ & (op[0].amon_ | op[1].amon_ | op[2].amon_ | op[3].amon_ ? 0x37 : 7) ? 2 : 0;
+      |                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ^
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sound/fmgen/fmgen_fmgen.cpp:857:79: note: place parentheses around the '|' expression to silence this warning
+  857 |         int lfo = op[0].ms_ & (op[0].amon_ | op[1].amon_ | op[2].amon_ | op[3].amon_ ? 0x37 : 7) ? 2 : 0;
+      |                                                                                      ^
+      |                                (                                                    )
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sound/fmgen/fmgen_fmgen.cpp:857:79: note: place parentheses around the '?:' expression to evaluate it first
+  857 |         int lfo = op[0].ms_ & (op[0].amon_ | op[1].amon_ | op[2].amon_ | op[3].amon_ ? 0x37 : 7) ? 2 : 0;
+      |                                                                                      ^         
+      |                                                                          (                     )
+2 warnings generated.
+[arm64-v8a] Compile++      : retro <= fmgen_opna.cpp
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sound/fmgen/fmgen_opna.cpp:1662:42: warning: result of comparison of constant 128 with expression of type 'int8' (aka 'signed char') is always true [-Wtautological-constant-out-of-range-compare]
+ 1662 |                         if ((rhythmkey & (1 << i)) && r.level < 128)
+      |                                                       ~~~~~~~ ^ ~~~
+/home/runner/work/my-apps/my-apps/np2kai/jni/../sound/fmgen/fmgen_opna.cpp:2032:42: warning: result of comparison of constant 128 with expression of type 'int8' (aka 'signed char') is always true [-Wtautological-constant-out-of-range-compare]
+ 2032 |                         if ((adpcmakey & (1 << i)) && r.level < 128)
+      |                                                       ~~~~~~~ ^ ~~~
+2 warnings generated.
+[arm64-v8a] Compile++      : retro <= ymfm_misc.cpp
+[arm64-v8a] Compile++      : retro <= np2compatible.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_adpcm.cpp
+[arm64-v8a] Compile++      : retro <= np2interop.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_opm.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_opq.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_opn.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_pcm.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_opz.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_opl.cpp
+[arm64-v8a] Compile++      : retro <= ymfm_ssg.cpp
+[arm64-v8a] SharedLibrary  : libretro.so
+[arm64-v8a] Install        : libretro.so => libs/arm64-v8a/libretro.so
