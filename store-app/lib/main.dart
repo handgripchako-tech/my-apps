@@ -215,11 +215,23 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
         'User-Agent': 'chako-store',
       };
 
+  // 古いトークン（非公開リポジトリ用）が残っていて 401 になったら、
+  // トークンを消してトークン無しで読み直す（公開リポジトリなので読める）
+  Future<http.Response> _api(Uri u, [Map<String, String> extra = const {}]) async {
+    var r = await http.get(u, headers: {..._headers, ...extra});
+    if (r.statusCode == 401 && token.isNotEmpty) {
+      token = '';
+      await prefs?.remove('gh_token');
+      r = await http.get(u, headers: {..._headers, ...extra});
+    }
+    return r;
+  }
+
   Future<List<AppDef>> _fetchDefs() async {
     try {
-      final r = await http.get(
+      final r = await _api(
         Uri.parse('https://api.github.com/repos/$repo/contents/store-app/apps.json'),
-        headers: {..._headers, 'Accept': 'application/vnd.github.raw+json'},
+        {'Accept': 'application/vnd.github.raw+json'},
       );
       if (r.statusCode == 200) {
         final list = jsonDecode(utf8.decode(r.bodyBytes)) as List;
@@ -242,9 +254,8 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
     });
     try {
       final defs = await _fetchDefs();
-      final r = await http.get(
+      final r = await _api(
         Uri.parse('https://api.github.com/repos/$repo/releases?per_page=100'),
-        headers: _headers,
       );
       if (r.statusCode == 401 || r.statusCode == 403 || r.statusCode == 404) {
         throw token.isEmpty
@@ -327,6 +338,17 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
       req.headers.set('Accept', 'application/octet-stream');
       req.headers.set('User-Agent', 'chako-store');
       var res = await req.close();
+      if (res.statusCode == 401 && token.isNotEmpty) {
+        await res.drain();
+        token = '';
+        await prefs?.remove('gh_token');
+        req = await client.getUrl(
+            Uri.parse('https://api.github.com/repos/$repo/releases/assets/${e.assetId}'));
+        req.followRedirects = false;
+        req.headers.set('Accept', 'application/octet-stream');
+        req.headers.set('User-Agent', 'chako-store');
+        res = await req.close();
+      }
       if (res.statusCode >= 300 && res.statusCode < 400) {
         final loc = res.headers.value('location');
         await res.drain();
