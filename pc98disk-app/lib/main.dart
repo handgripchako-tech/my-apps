@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'disk.dart';
+import 'packed.dart';
 import 'archive.dart';
 import 'archive_page.dart';
 import 'pmd_page.dart';
@@ -343,6 +344,48 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  static const _diskExts = {
+    'hdi', 'fdi', 'd88', '88d', 'd98', '98d', 'd68', 'nfd', 'nhd', 'hdm', 'dup', 'xdf', 'tfd', 'dsk', 'img', 'fdd', 'hdd'
+  };
+
+  /// 圧縮ファイルからディスクイメージを1つ取り出して、一時フォルダに置く。そのパスを返す。
+  Future<String?> _unpack(String path, String name) async {
+    final items = listPacked(path, name)
+        .where((e) => _diskExts.contains(extOf(e.baseName).toLowerCase()))
+        .toList();
+    if (items.isEmpty) {
+      _snack('中にディスクイメージ（hdi・fdi・d88・nfd など）が見つかりませんでした');
+      return null;
+    }
+    var it = items.first;
+    if (items.length > 1) {
+      if (!mounted) return null;
+      final pick = await showDialog<PackedItem>(
+        context: context,
+        builder: (c) => SimpleDialog(
+          title: const Text('どのディスクを開きますか？'),
+          children: [
+            for (final e in items)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(c, e),
+                child: Text(e.size >= 0 ? '${e.name}  (${fmtSize(e.size)})' : e.name),
+              ),
+          ],
+        ),
+      );
+      if (pick == null) return null;
+      it = pick;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final data = it.read();
+    final dir = Directory('${Directory.systemTemp.path}/unpacked');
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+    dir.createSync(recursive: true);
+    final out = File('${dir.path}/${it.baseName}');
+    out.writeAsBytesSync(data, flush: true);
+    return out.path;
+  }
+
   Future<void> _pick() async {
     if (disk?.modified == true &&
         !await _confirm('保存していない変更があります。破棄して別のイメージを開きますか？', ok: '破棄して開く')) {
@@ -362,14 +405,25 @@ class _HomePageState extends State<HomePage> {
     });
     await Future<void>.delayed(const Duration(milliseconds: 30));
     try {
-      final d = openDisk(path);
+      var openPath = path;
+      var openName = f.name;
+      if (isPacked(f.name)) {
+        final got = await _unpack(path, f.name);
+        if (got == null) {
+          if (mounted) setState(() => busy = false);
+          return;
+        }
+        openPath = got;
+        openName = got.split('/').last;
+      }
+      final d = openDisk(openPath);
       final v = findVolumes(d);
       disk?.close();
       disk = d;
       vols = v;
       vi = 0;
       stack.clear();
-      fileName = f.name;
+      fileName = openName;
       _reload();
     } catch (e) {
       error = e is FormatException ? e.message : '$e';
