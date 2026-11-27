@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'disk.dart';
+import 'pmd_page.dart';
 import 'sjis.dart';
 import 'zip.dart';
 
@@ -489,6 +490,17 @@ class _HomePageState extends State<HomePage> {
   Future<void> _saveAll() =>
       _saveZip(List<DirEntry>.of(_fat!.list(0)), '$_baseName.zip');
 
+  void _openPmd() {
+    final d = disk;
+    if (d == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => PmdPage(disk: d, vols: vols, baseName: _baseName),
+      ),
+    );
+  }
+
   void _showInfo() {
     final d = disk;
     if (d == null) return;
@@ -638,9 +650,12 @@ class _HomePageState extends State<HomePage> {
                             _addFiles();
                           case 'saveimg':
                             _saveImage();
+                          case 'pmd':
+                            _openPmd();
                         }
                       },
                       itemBuilder: (_) => [
+                        const PopupMenuItem(value: 'pmd', child: Text('PMD曲データを抜き出す')),
                         const PopupMenuItem(value: 'info', child: Text('ディスク情報')),
                         if (_fat != null) ...const [
                           PopupMenuItem(value: 'folder', child: Text('このフォルダをZIPで保存')),

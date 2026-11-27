@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -67,20 +68,26 @@ jobs:
         continue-on-error: true
         run: |
           python3 -c "import PIL" 2>/dev/null || python3 -m pip install --quiet --break-system-packages pillow
+          python3 tools/make_icon.py pc98disk pc98disk-app/android/app/src/main/res
 
       - name: ビルド
         working-directory: pc98disk-app
         run: |
           flutter pub get
           flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk pc98disk-app.apk
+          cp build/app/outputs/flutter-apk/app-release.apk ../pc98disk-v${{ github.run_number }}.apk
 
-      - name: Releases に公開
-        uses: softprops/action-gh-release@v2
+      - name: 更新内容を作成
+        uses: ./.github/actions/release-notes
         with:
-          tag_name: pc98disk-latest
-          name: PC98ディスクビューア (最新)
-          files: pc98disk-app/pc98disk-app.apk
+          paths: pc98disk-app
+
+      - uses: ./.github/actions/publish-release
+        with:
+          tag: pc98disk-latest
+          apk: pc98disk-v${{ github.run_number }}.apk
+          title: PC98ディスクビューア (最新)
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: ntfy 通知（成功）
         if: success()

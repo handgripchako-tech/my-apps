@@ -1,0 +1,438 @@
+// ディスクイメージから PMD の曲データ（と PCM・音色・MML）を探して取り出す画面。
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+
+import 'disk.dart';
+import 'main.dart' show fmtSize;
+import 'pmd.dart';
+import 'zip.dart';
+
+enum PmdKind { file, embed, lzss, raw, pcm, mml }
+
+const _kindLabel = {
+  PmdKind.file: '曲ファイル',
+  PmdKind.embed: '埋め込み',
+  PmdKind.lzss: 'LZSS展開',
+  PmdKind.raw: 'ディスク直読み',
+  PmdKind.pcm: 'PCM・音色',
+  PmdKind.mml: 'MML',
+};
+
+const _kindColor = {
+  PmdKind.file: Colors.teal,
+  PmdKind.embed: Colors.orange,
+  PmdKind.lzss: Colors.purple,
+  PmdKind.raw: Colors.brown,
+  PmdKind.pcm: Colors.blueGrey,
+  PmdKind.mml: Colors.indigo,
+};
+
+class PmdHit {
+  final PmdKind kind;
+  final String source; // 見つかった場所（ファイルのパス）
+  final int offset; // そのファイル内の位置
+  final Uint8List data;
+  final String name; // 保存するときの名前
+  final PmdInfo? info;
+  bool selected = true;
+  PmdHit(this.kind, this.source, this.offset, this.data, this.name, this.info);
+
+  bool get isSong => kind != PmdKind.pcm && kind != PmdKind.mml;
+}
+
+class PmdPage extends StatefulWidget {
+  final Disk disk;
+  final List<Volume> vols;
+  final String baseName;
+  const PmdPage({super.key, required this.disk, required this.vols, required this.baseName});
+
+  @override
+  State<PmdPage> createState() => _PmdPageState();
+}
+
+class _PmdPageState extends State<PmdPage> {
+  final List<PmdHit> hits = [];
+  final Set<String> _seen = {};
+  bool scanning = false;
+  bool _cancel = false;
+  int files = 0;
+  String current = '';
+  bool rawMode = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _start(raw: widget.vols.isEmpty);
+  }
+
+  @override
+  void dispose() {
+    _cancel = true;
+    super.dispose();
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _yield() async {
+    if (mounted) setState(() {});
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  // ------------------------------------------------------------ 探す
+
+  Future<void> _start({required bool raw}) async {
+    setState(() {
+      hits.clear();
+      _seen.clear();
+      files = 0;
+      current = '';
+      scanning = true;
+      rawMode = raw;
+      _cancel = false;
+    });
+    try {
+      if (raw) {
+        await _scanRaw();
+      } else {
+        for (final v in widget.vols) {
+          if (_cancel) break;
+          final pre = widget.vols.length > 1 ? '${v.name}:/' : '';
+          await _walk(v.fat, 0, pre, 0);
+        }
+      }
+    } catch (e) {
+      _snack('途中で失敗しました: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      scanning = false;
+      current = '';
+    });
+    final songs = hits.where((h) => h.isSong).length;
+    _snack('曲 $songs 件、付属ファイル ${hits.length - songs} 件 見つかりました');
+  }
+
+  void _add(PmdHit h) {
+    if (h.data.isEmpty) return;
+    final key = '${h.data.length}:${ZipWriter.crc32(h.data)}';
+    if (!_seen.add(key)) return; // 同じ中身は1つだけ
+    hits.add(h);
+  }
+
+  Future<void> _walk(Fat fat, int cluster, String path, int depth) async {
+    if (depth > 32 || _cancel) return;
+    List<DirEntry> list;
+    try {
+      list = fat.list(cluster);
+    } catch (_) {
+      return;
+    }
+    for (final e in list) {
+      if (_cancel) return;
+      if (e.isDir) {
+        if (e.cluster >= 2 && e.cluster != cluster) {
+          await _walk(fat, e.cluster, '$path${e.name}/', depth + 1);
+        }
+      } else {
+        await _file(fat, e, '$path${e.name}');
+      }
+    }
+  }
+
+  static String _ext(String name) {
+    final i = name.lastIndexOf('.');
+    return i < 0 ? '' : name.substring(i + 1).toUpperCase();
+  }
+
+  static String _stem(String name) {
+    final i = name.lastIndexOf('.');
+    return i <= 0 ? name : name.substring(0, i);
+  }
+
+  static String _hex(int n) => n.toRadixString(16).toUpperCase().padLeft(5, '0');
+
+  Future<void> _file(Fat fat, DirEntry e, String path) async {
+    files++;
+    current = path;
+    if (files % 3 == 0) await _yield();
+    if (e.size == 0 || e.size > 32 * 1024 * 1024) return;
+    Uint8List d;
+    try {
+      d = fat.readFile(e);
+    } catch (_) {
+      return;
+    }
+    final ext = _ext(e.name);
+    if (pmdPcmExts.contains(ext)) {
+      _add(PmdHit(PmdKind.pcm, path, 0, d, e.name, null));
+      return;
+    }
+    if (pmdMmlExts.contains(ext)) {
+      _add(PmdHit(PmdKind.mml, path, 0, d, e.name, null));
+      return;
+    }
+    final named = pmdSongExts.contains(ext);
+    final found = scanPmd(d);
+    if (named) {
+      PmdInfo? head;
+      for (final f in found) {
+        if (f.start == 0) head = f;
+      }
+      _add(PmdHit(PmdKind.file, path, 0, d, e.name, head));
+    }
+    final stem = _stem(e.name);
+    for (final f in found) {
+      if (named && f.start == 0) continue;
+      final kind = f.start == 0 ? PmdKind.file : PmdKind.embed;
+      final nm = f.start == 0 ? '$stem.M' : '${stem}_${_hex(f.start)}.M';
+      _add(PmdHit(kind, path, f.start, Uint8List.fromList(d.sublist(f.start, f.end)), nm, f));
+    }
+    if (found.isEmpty && !named && d.length >= 32 && d.length <= 2 * 1024 * 1024) {
+      _tryLzss(d, path, stem);
+    }
+  }
+
+  /// 圧縮されたファイルなら、展開してもう一度探す
+  void _tryLzss(Uint8List d, String path, String stem) {
+    final maxOut = (d.length * 16).clamp(4096, 4 * 1024 * 1024);
+    for (final off in const [0, 2, 4]) {
+      for (final fill in const [0x20, 0x00]) {
+        final out = lzssDecode(d, off, maxOut, fill: fill);
+        final fs = scanPmd(out);
+        if (fs.isEmpty) continue;
+        var k = 0;
+        for (final f in fs) {
+          k++;
+          final nm = fs.length == 1 ? '${stem}_lz.M' : '${stem}_lz$k.M';
+          _add(PmdHit(PmdKind.lzss, path, f.start,
+              Uint8List.fromList(out.sublist(f.start, f.end)), nm, f));
+        }
+        return;
+      }
+    }
+  }
+
+  /// ファイルの区切りを使わず、ディスク全体を頭から調べる（独自形式のディスクや消したファイル向け）
+  Future<void> _scanRaw() async {
+    final src = widget.disk.src;
+    const chunk = 1 << 20;
+    const over = 0x10000;
+    var k = 0;
+    for (var pos = 0; pos < src.length && !_cancel; pos += chunk) {
+      files = pos;
+      current = 'ディスク直読み ${fmtSize(pos)} / ${fmtSize(src.length)}';
+      await _yield();
+      final buf = src.read(pos, chunk + over);
+      final valid = (src.length - pos).clamp(0, chunk + over);
+      final b = Uint8List.sublistView(buf, 0, valid);
+      for (final f in scanPmd(b, to: chunk < valid ? chunk : valid)) {
+        k++;
+        final at = pos + f.start;
+        _add(PmdHit(PmdKind.raw, 'ディスク', at, Uint8List.fromList(b.sublist(f.start, f.end)),
+            '${widget.baseName}_${_hex(at)}.M', f));
+      }
+    }
+    files = k;
+  }
+
+  // ------------------------------------------------------------ 保存
+
+  Future<void> _saveOne(PmdHit h) async {
+    final p = await FilePicker.platform.saveFile(
+      dialogTitle: '保存先',
+      fileName: h.name,
+      bytes: h.data,
+    );
+    if (p != null) _snack('保存しました: ${h.name}');
+  }
+
+  Future<void> _saveZip() async {
+    final sel = hits.where((h) => h.selected).toList();
+    if (sel.isEmpty) {
+      _snack('保存するものを選んでください');
+      return;
+    }
+    final z = ZipWriter();
+    final used = <String>{};
+    for (final h in sel) {
+      final dir = h.kind == PmdKind.pcm
+          ? 'PCM/'
+          : h.kind == PmdKind.mml
+              ? 'MML/'
+              : '';
+      var nm = '$dir${h.name}';
+      var n = 2;
+      while (!used.add(nm.toUpperCase())) {
+        nm = '$dir${_stem(h.name)}_$n.${_ext(h.name)}';
+        n++;
+      }
+      z.add(nm, h.data);
+    }
+    final p = await FilePicker.platform.saveFile(
+      dialogTitle: '保存先',
+      fileName: '${widget.baseName}_PMD.zip',
+      bytes: z.finish(),
+    );
+    if (p != null) _snack('${sel.length} 件をZIPで保存しました');
+  }
+
+  void _detail(PmdHit h) {
+    final i = h.info;
+    final rows = <String>[
+      '種類: ${_kindLabel[h.kind]}',
+      '場所: ${h.source}${h.offset > 0 ? '  (+0x${h.offset.toRadixString(16).toUpperCase()})' : ''}',
+      '大きさ: ${fmtSize(h.data.length)}',
+      if (i?.title != null) '曲名: ${i!.title}',
+      if (i?.composer != null) '作曲: ${i!.composer}',
+      if (i?.arranger != null) '編曲: ${i!.arranger}',
+      if (i?.pcmFile != null) '使うPCM: ${i!.pcmFile}',
+      if (i?.ppsFile != null) '使うPPS: ${i!.ppsFile}',
+      if (i?.ppzFile != null) '使うPPZ: ${i!.ppzFile}',
+      if (h.isSong && h.kind != PmdKind.file && i != null && !i.exactEnd)
+        '※終わりの位置が分からなかったので、後ろに余分なデータが付いています（再生には影響しないことが多いです）',
+      if (h.kind == PmdKind.file && i == null) '※中身がPMDの形式と一致しませんでした（名前だけで拾っています）',
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(h.name),
+        content: SingleChildScrollView(
+          child: SelectableText(rows.join('\n')),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('閉じる')),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.pop(c);
+              _saveOne(h);
+            },
+            icon: const Icon(Icons.save_alt),
+            label: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------ 画面
+
+  @override
+  Widget build(BuildContext context) {
+    final nSel = hits.where((h) => h.selected).length;
+    final allSel = hits.isNotEmpty && nSel == hits.length;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('PMD曲データ'),
+        actions: [
+          if (!scanning && hits.isNotEmpty)
+            IconButton(
+              tooltip: allSel ? '全部はずす' : '全部選ぶ',
+              icon: Icon(allSel ? Icons.deselect : Icons.select_all),
+              onPressed: () => setState(() {
+                for (final h in hits) {
+                  h.selected = !allSel;
+                }
+              }),
+            ),
+          if (!scanning)
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == 'raw') _start(raw: true);
+                if (v == 'files') _start(raw: false);
+              },
+              itemBuilder: (_) => [
+                if (!rawMode || widget.vols.isEmpty)
+                  const PopupMenuItem(value: 'raw', child: Text('ディスク全体を直接調べる（消したファイル・独自形式向け）')),
+                if (rawMode && widget.vols.isNotEmpty)
+                  const PopupMenuItem(value: 'files', child: Text('ファイルごとに調べ直す')),
+              ],
+            ),
+        ],
+      ),
+      body: Column(children: [
+        if (scanning) ...[
+          const LinearProgressIndicator(),
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text(
+              rawMode ? current : '$files 個目: $current',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+        Expanded(
+          child: hits.isEmpty && !scanning
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      rawMode
+                          ? '見つかりませんでした。'
+                          : '見つかりませんでした。\n独自の圧縮をしているゲームかもしれません。\n右上のメニューの「ディスク全体を直接調べる」も試せます。',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: hits.length,
+                  itemBuilder: (_, i) => _tile(hits[i]),
+                ),
+        ),
+      ]),
+      bottomNavigationBar: scanning || hits.isEmpty
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: FilledButton.icon(
+                  onPressed: nSel == 0 ? null : _saveZip,
+                  icon: const Icon(Icons.archive),
+                  label: Text('選んだ $nSel 件をZIPで保存'),
+                ),
+              ),
+            ),
+    );
+  }
+
+  Widget _tile(PmdHit h) {
+    final i = h.info;
+    final title = i?.title ?? h.name;
+    final sub = <String>[
+      '${title == h.name ? '' : '${h.name} ・ '}${fmtSize(h.data.length)}',
+      h.source + (h.offset > 0 ? ' (+0x${h.offset.toRadixString(16).toUpperCase()})' : ''),
+      if (i?.composer != null) '作曲: ${i!.composer}',
+      if (i?.pcmFile != null) 'PCM: ${i!.pcmFile}',
+    ];
+    final color = _kindColor[h.kind]!;
+    return ListTile(
+      leading: Checkbox(
+        value: h.selected,
+        onChanged: (v) => setState(() => h.selected = v ?? false),
+      ),
+      title: Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          margin: const EdgeInsets.only(right: 6),
+          decoration: BoxDecoration(
+            color: color.withAlpha(90),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(_kindLabel[h.kind]!, style: const TextStyle(fontSize: 11)),
+        ),
+        Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis)),
+      ]),
+      subtitle: Text(sub.join('\n'), style: const TextStyle(fontSize: 12)),
+      isThreeLine: true,
+      onTap: () => _detail(h),
+    );
+  }
+}
