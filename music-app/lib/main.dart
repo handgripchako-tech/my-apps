@@ -503,7 +503,8 @@ class Offline {
     if (changed) h.saveSoon();
   }
 
-  // PMD本体が無い、大きいスマホ内の WAV/FLAC を、サーバーで AAC 192k に圧縮して置き換える (Wi-Fi のとき)
+  // 大きいスマホ内の WAV/FLAC を、サーバーで AAC 192k に圧縮して置き換える (Wi-Fi のとき)
+  // PMD の曲も、一度だけWAVを作って AAC にして残す (再生のたびに音を作り直さない。電池節約)
   Future<void> _compressPhone() async {
     final pd = phoneDir;
     if (pd == null || !h.stateReady) return;
@@ -515,8 +516,11 @@ class Offline {
         final fn = it.p.substring(6);
         final low = fn.toLowerCase();
         if (!(low.endsWith('.wav') || low.endsWith('.flac'))) continue;
-        if (Pmd.hasSrc(pd, fn)) continue; // PMD本体があれば、WAVは自動で整理される
         if (todo.contains(fn)) continue;
+        if (Pmd.hasSrc(pd, fn)) {
+          if (low.endsWith('.wav')) todo.add(fn); // WAVが無くても、PMD本体から作る
+          continue;
+        }
         final f = File('${pd.path}/$fn');
         try {
           if (!f.existsSync() || f.lengthSync() < 8 * 1024 * 1024) continue;
@@ -537,6 +541,9 @@ class Offline {
       final dot = fn.lastIndexOf('.');
       final stem = fn.substring(0, dot);
       final dst = File('${pd.path}/$stem.m4a');
+      if (Pmd.hasSrc(pd, fn) && await Pmd.ensureWav(pd, fn) == null) {
+        continue; // PMDの音を作れなかった
+      }
       final ok = await h.api.compressUpload(
           File('${pd.path}/$fn'), dst, fn.substring(dot + 1).toLowerCase());
       if (!ok) {

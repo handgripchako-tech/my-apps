@@ -202,6 +202,7 @@ class Pmd {
   /// PMD由来のWAVだけ消す(PMD本体があるので、また作れる)
   static Future<void> dropWav(Directory? pd, String fn) async {
     if (pd == null || !hasSrc(pd, fn)) return;
+    if (!fn.toLowerCase().endsWith('.wav')) return; // AAC にして残したものは消さない
     try {
       await File('${pd.path}/$fn').delete();
     } catch (_) {}
@@ -216,6 +217,7 @@ class Pmd {
         if (e is! File) continue;
         final name = e.uri.pathSegments.last;
         if (name == keepFn) continue;
+        if (!name.toLowerCase().endsWith('.wav')) continue; // AAC にして残したものは消さない
         if (!srcFile(pd, _stemOf(name)).existsSync()) continue;
         files.add(e);
       }
