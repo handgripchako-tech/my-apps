@@ -5,6 +5,8 @@
  * いま対応しているドライバ:
  *   - WM : "MUSIC DRIVER Version 0.38a By Pirorin/Witch2" (MUSIC.COM, silky's 作品など)
  *          INT 60h で操作。AX=80h で曲置き場を受け取り、曲を写して AX=100h で演奏開始。
+ *   - PAI: "synthia 3.00(FM3+PSG3)" (S20S_4.BIN)。seg:0000 を far call して初期化。
+ *          曲はドライバと同じセグメントの 1B86h に置き、INT 60h AH=0, DX=0 で演奏開始。
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +14,7 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include <strings.h>
 #include "opna.h"
 #include "x86emu.h"
 
@@ -60,7 +63,10 @@ struct Machine {
     uint8_t in(uint16_t p) {
         switch (p) {
             case 0x188: return opna ? (opna->ReadStatus() & 0x7F) : 0;
-            case 0x18A: return addr0 == 0xFF ? 1 : (opna ? opna->GetReg(addr0) : 0);
+            case 0x18A:
+                if (addr0 == 0xFF) return 1;      // OPNA の印
+                if (addr0 == 0x0E) return 0xC0;   // ボードの割り込み設定 = INT5 (IRQ12, INT 14h)
+                return opna ? opna->GetReg(addr0) : 0;
             case 0x18C: return opna ? (opna->ReadStatusEx() & 0x7F) : 0;
             case 0x18E: return opna ? opna->GetReg(0x100 | addr1) : 0;
             case 0x02: return mask_m;
@@ -172,7 +178,6 @@ struct Machine {
     uint64_t last_h = 0;
     bool tick() {
         if (!opna || !opna->irq) return false;
-        if (mask_s & 0x10) return false;
         prepStack();
         cpu.sreg[3] = cpu.sreg[0] = 0x8000;
         h = 1469598103934665603ULL;
@@ -225,9 +230,11 @@ void advance(Machine &m, long long &acc, int rate, int32_t us, std::vector<int32
 }
 
 
+enum Kind { KIND_WM = 0, KIND_PAI = 1 };
+
 // 指定のドライバで曲を鳴らし始める
-bool start_wm(Machine &m, const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song,
-              const char *pcm_dir, int rate) {
+bool start_drv(Machine &m, int kind, const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song,
+               const char *pcm_dir, int rate) {
     m.opna = new Chip();
     char dir[2048] = {0};
     if (pcm_dir && pcm_dir[0]) {
@@ -236,16 +243,34 @@ bool start_wm(Machine &m, const std::vector<uint8_t> &drv, const std::vector<uin
         if (dir[l - 1] != '/') { dir[l] = '/'; dir[l + 1] = 0; }
     }
     if (!m.opna->Init(OPNA_CLOCK, rate, false, dir[0] ? dir : "./")) return false;
-    if (!m.loadCom(&drv[0], (int)drv.size(), 0x1000)) return false;
-    // 演奏中なら止める → 曲置き場をもらう → 写す → 演奏
-    m.int60(0xFE);
-    if ((m.cpu.r[0] & 0xFF) != 0) m.int60(0x00);
-    if (!m.int60(0x80)) return false;
-    uint32_t dst = X86::lin(m.cpu.sreg[0], m.cpu.r[0]);
+    if (kind == KIND_WM) {
+        if (!m.loadCom(&drv[0], (int)drv.size(), 0x1000)) return false;
+        // 演奏中なら止める → 曲置き場をもらう → 写す → 演奏
+        m.int60(0xFE);
+        if ((m.cpu.r[0] & 0xFF) != 0) m.int60(0x00);
+        if (!m.int60(0x80)) return false;
+        uint32_t dst = X86::lin(m.cpu.sreg[0], m.cpu.r[0]);
+        size_t n = song.size();
+        if (n > 0x2000) n = 0x2000;
+        memcpy(m.cpu.mem + dst, &song[0], n);
+        return m.int60(0x100);
+    }
+    // PAI (synthia)
+    const uint16_t seg = 0x1000;
+    if (drv.size() > 0x1B86 + 0x10 || drv.size() < 0x100) {
+        if (drv.size() < 0x100 || drv.size() > 0x8000) return false;
+    }
+    memcpy(m.cpu.mem + X86::lin(seg, 0), &drv[0], drv.size());
+    m.prepStack();
+    m.cpu.sreg[0] = m.cpu.sreg[3] = seg;
+    if (!m.cpu.callfar(seg, 0)) return false;
     size_t n = song.size();
-    if (n > 0x2000) n = 0x2000;
-    memcpy(m.cpu.mem + dst, &song[0], n);
-    return m.int60(0x100);
+    if (n > 0x8000 - 0x1B86) n = 0x8000 - 0x1B86;
+    memcpy(m.cpu.mem + X86::lin(seg, 0x1B86), &song[0], n);
+    m.prepStack();
+    m.cpu.r[0] = 0x0000; m.cpu.r[2] = 0;
+    m.cpu.sreg[3] = m.cpu.sreg[0] = seg;
+    return m.cpu.callint(0x60);
 }
 
 struct Length {
@@ -256,11 +281,11 @@ struct Length {
 
 // 音を作らずに進めて、曲の長さを測る。
 // 割り込みごとの書き込みの指紋を並べ、同じ並びがもう一度出てきたらそこがループ。
-Length measure(const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song, const char *pcm_dir) {
+Length measure(int kind, const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song, const char *pcm_dir) {
     Length L;
     Machine m;
     m.silent = true;
-    if (!start_wm(m, drv, song, pcm_dir, 44100)) { delete m.opna; return L; }
+    if (!start_drv(m, kind, drv, song, pcm_dir, 44100)) { delete m.opna; return L; }
     const double MAX_SEC = 900;
     const int W = 24;    // この数の割り込みが続けて一致したら同じ所とみなす
     std::vector<uint64_t> hs;
@@ -336,10 +361,10 @@ Length measure(const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song
     return L;
 }
 
-int render(const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song, const char *pcm_dir,
+int render(int kind, const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song, const char *pcm_dir,
            const char *wav_path, int rate, double seconds, double fade_sec) {
     Machine m;
-    if (!start_wm(m, drv, song, pcm_dir, rate)) { delete m.opna; return 1; }
+    if (!start_drv(m, kind, drv, song, pcm_dir, rate)) { delete m.opna; return 1; }
     FILE *fp = fopen(wav_path, "wb");
     if (!fp) { delete m.opna; return 2; }
     write_header(fp, rate, 0);
@@ -404,53 +429,75 @@ std::string drv_dir_file(const char *pcm_dir, const char *name) {
     return d + name;
 }
 
-bool load_driver(const char *pcm_dir, std::vector<uint8_t> &drv) {
-    const char *names[] = {"MUSIC.COM", "music.com", "Music.com"};
-    for (const char *n : names) if (read_all(drv_dir_file(pcm_dir, n).c_str(), drv)) return true;
+bool load_driver(int kind, const char *pcm_dir, std::vector<uint8_t> &drv) {
+    static const char *wm[] = {"MUSIC.COM", "music.com", "Music.com", nullptr};
+    static const char *pai[] = {"S20S_4.BIN", "s20s_4.bin", "S20S_4.bin", nullptr};
+    const char **names = kind == KIND_WM ? wm : pai;
+    for (int i = 0; names[i]; i++) if (read_all(drv_dir_file(pcm_dir, names[i]).c_str(), drv)) return true;
     return false;
 }
 
-} // namespace
-
-/*
- * WM（silky's などの MUSIC.COM 用の曲）
- * ドライバ MUSIC.COM は pcm_dir（音色ファイル置き場）に置いておく。
- * pmd_to_wav と同じ引数。戻り値 0=成功 1=読めない/ドライバが無い 2=書き出せない
- */
-DRV_EXPORT int wm_probe(const char *path, const char *pcm_dir, char *title, char *compo) {
+int probe_kind(int kind, const char *path, const char *pcm_dir, char *title, char *compo) {
     std::vector<uint8_t> drv, song;
     if (title) title[0] = 0;
     if (compo) compo[0] = 0;
-    if (!load_driver(pcm_dir, drv) || !read_all(path, song)) return -1;
-    Length L = measure(drv, song, pcm_dir);
+    if (!load_driver(kind, pcm_dir, drv) || !read_all(path, song)) return -1;
+    Length L = measure(kind, drv, song, pcm_dir);
     double f;
     double s = plan(L, 2, 6, f);
     if (L.loop <= 0 && L.end <= 0.5) return -1;
     return (int)(s + 0.5);
 }
 
-DRV_EXPORT int wm_to_wav(const char *path, const char *pcm_dir, const char *wav_path,
-                         int rate, int loops, int fade_sec, char *title, char *compo) {
+int to_wav_kind(int kind, const char *path, const char *pcm_dir, const char *wav_path,
+                int rate, int loops, int fade_sec, char *title, char *compo) {
     std::vector<uint8_t> drv, song;
     if (title) title[0] = 0;
     if (compo) compo[0] = 0;
-    if (!load_driver(pcm_dir, drv) || !read_all(path, song)) return 1;
+    if (!load_driver(kind, pcm_dir, drv) || !read_all(path, song)) return 1;
     if (rate < 8000) rate = 44100;
     if (loops < 1) loops = 1;
     if (fade_sec < 0) fade_sec = 0;
-    Length L = measure(drv, song, pcm_dir);
+    Length L = measure(kind, drv, song, pcm_dir);
     double fade;
     double sec = plan(L, loops, fade_sec, fade);
 #ifdef PC98DRV_TEST
     fprintf(stderr, "intro=%.2f loop=%.2f end=%.2f -> %.1fs\n", L.intro, L.loop, L.end, sec);
 #endif
-    return render(drv, song, pcm_dir, wav_path, rate, sec, fade);
+    return render(kind, drv, song, pcm_dir, wav_path, rate, sec, fade);
+}
+
+} // namespace
+
+/*
+ * ゲームのドライバを音色ファイル置き場(pcm_dir)に置いておき、本物のドライバで鳴らす。
+ *   WM : MUSIC.COM   （silky's など）
+ *   PAI: S20S_4.BIN  （synthia 3.00）
+ * pmd_to_wav と同じ引数。戻り値 0=成功 1=読めない/ドライバが無い 2=書き出せない
+ */
+DRV_EXPORT int wm_probe(const char *path, const char *pcm_dir, char *title, char *compo) {
+    return probe_kind(KIND_WM, path, pcm_dir, title, compo);
+}
+DRV_EXPORT int wm_to_wav(const char *path, const char *pcm_dir, const char *wav_path,
+                         int rate, int loops, int fade_sec, char *title, char *compo) {
+    return to_wav_kind(KIND_WM, path, pcm_dir, wav_path, rate, loops, fade_sec, title, compo);
+}
+DRV_EXPORT int pai_probe(const char *path, const char *pcm_dir, char *title, char *compo) {
+    return probe_kind(KIND_PAI, path, pcm_dir, title, compo);
+}
+DRV_EXPORT int pai_to_wav(const char *path, const char *pcm_dir, const char *wav_path,
+                          int rate, int loops, int fade_sec, char *title, char *compo) {
+    return to_wav_kind(KIND_PAI, path, pcm_dir, wav_path, rate, loops, fade_sec, title, compo);
 }
 
 #ifdef PC98DRV_TEST
 int main(int argc, char **argv) {
-    if (argc < 4) { fprintf(stderr, "usage: %s libdir song.wm out.wav\n", argv[0]); return 1; }
-    int rc = wm_to_wav(argv[2], argv[1], argv[3], 44100, 2, 6, nullptr, nullptr);
+    if (argc < 4) { fprintf(stderr, "usage: %s libdir song out.wav\n", argv[0]); return 1; }
+    const char *p = argv[2];
+    size_t l = strlen(p);
+    bool pai = l > 4 && (strcasecmp(p + l - 4, ".pai") == 0);
+    int rc = pai ? pai_to_wav(p, argv[1], argv[3], 44100, 2, 6, nullptr, nullptr)
+                 : wm_to_wav(p, argv[1], argv[3], 44100, 2, 6, nullptr, nullptr);
     fprintf(stderr, "rc=%d\n", rc);
     return rc;
 }

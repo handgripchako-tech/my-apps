@@ -1378,8 +1378,8 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
         toast('保存場所を用意できません');
         return;
       }
-      // .com は WM 曲を鳴らすゲームの音楽ドライバ(MUSIC.COM)
-      const companionExts = {'ppc', 'p86', 'pzi', 'pvi', 'pps', 'ppz', 'wav', 'com'};
+      // .com / .bin はゲームの音楽ドライバ(WM: MUSIC.COM, PAI: S20S_4.BIN)
+      const companionExts = {'ppc', 'p86', 'pzi', 'pvi', 'pps', 'ppz', 'wav', 'com', 'bin'};
       final songs = <PlatformFile>[];
       var saved = 0;
       for (final f in r.files) {
@@ -1401,6 +1401,11 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
         if (f.name.toLowerCase().endsWith('.wm') && !await Pmd.hasWmDriver()) {
           fail++;
           lastErr = 'WMの曲にはゲームの MUSIC.COM も一緒に選んでください';
+          continue;
+        }
+        if (f.name.toLowerCase().endsWith('.pai') && !await Pmd.hasPaiDriver()) {
+          fail++;
+          lastErr = 'PAIの曲にはゲームの S20S_4.BIN も一緒に選んでください';
           continue;
         }
         if (!await Pmd.probe(f.path!)) {
@@ -1874,7 +1879,7 @@ class _HomePageState extends State<HomePage> {
         shape: const RoundedRectangleBorder(side: BorderSide(color: kLine, width: 1.2)),
         title: Text('[ ${h.curPl.name} ]', style: kTitle),
         children: [
-          mi(c, 'PC-98の曲（PMD・WM）を追加', 'pmd'),
+          mi(c, 'PC-98の曲（PMD・WM・PAI）を追加', 'pmd'),
           mi(c, 'スマホ内のファイルを追加', 'phone'),
           mi(c, '名前を変更', 'ren'),
           mi(c, h.curPl.offline ? 'スマホに保存: ON（タップでOFF）' : 'スマホに保存: OFF（タップでON）', 'off'),

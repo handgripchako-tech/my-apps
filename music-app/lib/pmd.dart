@@ -23,25 +23,37 @@ class Pmd {
   Pmd._();
 
   /// PMD曲の拡張子(中身かどうかはネイティブ側でも確認する)
-  static const songExts = {'m', 'm2', 'mz', 'mp', 'mdt', 'wm'};
+  static const songExts = {'m', 'm2', 'mz', 'mp', 'mdt', 'wm', 'pai'};
 
   static bool _isMdt(String path) => path.toLowerCase().endsWith('.mdt');
 
   /// silky's などの WM 曲。ゲームの MUSIC.COM を音色ファイル置き場に入れて、本物のドライバで鳴らす
   static bool _isWm(String path) => path.toLowerCase().endsWith('.wm');
 
+  /// synthia の PAI 曲。ゲームの S20S_4.BIN を音色ファイル置き場に入れて鳴らす
+  static bool _isPai(String path) => path.toLowerCase().endsWith('.pai');
+
   /// ネイティブ側の関数名の頭（pmd / mdt / wm）
   static String _kind(String path) =>
-      _isMdt(path) ? 'mdt' : (_isWm(path) ? 'wm' : 'pmd');
+      _isMdt(path) ? 'mdt' : (_isWm(path) ? 'wm' : (_isPai(path) ? 'pai' : 'pmd'));
 
   /// 本体の保存用の拡張子
   static String _srcExt(String path) =>
-      _isMdt(path) ? '.mdt' : (_isWm(path) ? '.wm' : '.m');
+      _isMdt(path) ? '.mdt' : (_isWm(path) ? '.wm' : (_isPai(path) ? '.pai' : '.m'));
 
   /// WM の曲を鳴らすためのドライバ(MUSIC.COM)が保存済みか
   static Future<bool> hasWmDriver() async {
     final d = await libDir();
     for (final n in const ['MUSIC.COM', 'music.com', 'Music.com']) {
+      if (await File('${d.path}/$n').exists()) return true;
+    }
+    return false;
+  }
+
+  /// PAI の曲を鳴らすためのドライバ(S20S_4.BIN)が保存済みか
+  static Future<bool> hasPaiDriver() async {
+    final d = await libDir();
+    for (final n in const ['S20S_4.BIN', 's20s_4.bin', 'S20S_4.bin']) {
       if (await File('${d.path}/$n').exists()) return true;
     }
     return false;
@@ -90,6 +102,8 @@ class Pmd {
     if (t.existsSync()) return t;
     final w = File('${pd.path}/pmdsrc/$stem.wm');
     if (w.existsSync()) return w;
+    final pa = File('${pd.path}/pmdsrc/$stem.pai');
+    if (pa.existsSync()) return pa;
     return File('${pd.path}/pmdsrc/$stem.m');
   }
 
