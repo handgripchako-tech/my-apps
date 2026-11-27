@@ -4,12 +4,13 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import 'archive.dart';
 import 'disk.dart';
 import 'main.dart' show fmtSize;
 import 'pmd.dart';
 import 'zip.dart';
 
-enum PmdKind { file, embed, lzss, raw, pcm, mml }
+enum PmdKind { file, embed, lzss, raw, pcm, mml, driver }
 
 const _kindLabel = {
   PmdKind.file: '曲ファイル',
@@ -18,6 +19,7 @@ const _kindLabel = {
   PmdKind.raw: 'ディスク直読み',
   PmdKind.pcm: 'PCM・音色',
   PmdKind.mml: 'MML',
+  PmdKind.driver: 'ドライバ',
 };
 
 const _kindColor = {
@@ -27,6 +29,7 @@ const _kindColor = {
   PmdKind.raw: Colors.brown,
   PmdKind.pcm: Colors.blueGrey,
   PmdKind.mml: Colors.indigo,
+  PmdKind.driver: Colors.red,
 };
 
 class PmdHit {
@@ -39,7 +42,7 @@ class PmdHit {
   bool selected = true;
   PmdHit(this.kind, this.source, this.offset, this.data, this.name, this.info);
 
-  bool get isSong => kind != PmdKind.pcm && kind != PmdKind.mml;
+  bool get isSong => kind != PmdKind.pcm && kind != PmdKind.mml && kind != PmdKind.driver;
 }
 
 class PmdPage extends StatefulWidget {
@@ -169,13 +172,63 @@ class _PmdPageState extends State<PmdPage> {
     } catch (_) {
       return;
     }
-    final ext = _ext(e.name);
+    await _bytes(path, e.name, d, 0);
+  }
+
+  /// 文字列が入っているか（先頭 64KB だけ見る）
+  static bool _has(Uint8List d, String str) {
+    final p = str.codeUnits;
+    final n = d.length < 0x10000 ? d.length : 0x10000;
+    for (var i = 0; i + p.length <= n; i++) {
+      var k = 0;
+      while (k < p.length && d[i + k] == p[k]) {
+        k++;
+      }
+      if (k == p.length) return true;
+    }
+    return false;
+  }
+
+  /// WM / PAI の曲（PMD以外のドライバの曲）
+  static const _otherSongExts = {'WM', 'PAI'};
+
+  Future<void> _bytes(String path, String name, Uint8List d, int depth) async {
+    // まとめファイル（FA1 / silky's DISK）なら中身を1つずつ調べる
+    final arc = depth < 2 ? openArchive(d) : null;
+    if (arc != null) {
+      for (final en in arc.entries) {
+        if (_cancel) return;
+        files++;
+        current = '$path/${en.name}';
+        if (files % 3 == 0) await _yield();
+        Uint8List x;
+        try {
+          x = en.read();
+        } catch (_) {
+          continue;
+        }
+        await _bytes('$path/${en.name}', en.name, x, depth + 1);
+      }
+      return;
+    }
+    final ext = _ext(name);
+    // WM・PAI の曲は、ゲームの音楽ドライバと組で鳴らす
+    if (const {'COM', 'BIN', 'EXE'}.contains(ext) &&
+        d.length < 0x10000 &&
+        (_has(d, 'MUSIC DRIVER') || _has(d, 'synthia'))) {
+      _add(PmdHit(PmdKind.driver, path, 0, d, name, null));
+      return;
+    }
+    if (_otherSongExts.contains(ext)) {
+      _add(PmdHit(PmdKind.file, path, 0, d, name, null));
+      return;
+    }
     if (pmdPcmExts.contains(ext)) {
-      _add(PmdHit(PmdKind.pcm, path, 0, d, e.name, null));
+      _add(PmdHit(PmdKind.pcm, path, 0, d, name, null));
       return;
     }
     if (pmdMmlExts.contains(ext)) {
-      _add(PmdHit(PmdKind.mml, path, 0, d, e.name, null));
+      _add(PmdHit(PmdKind.mml, path, 0, d, name, null));
       return;
     }
     final named = pmdSongExts.contains(ext);
@@ -185,9 +238,9 @@ class _PmdPageState extends State<PmdPage> {
       for (final f in found) {
         if (f.start == 0) head = f;
       }
-      _add(PmdHit(PmdKind.file, path, 0, d, e.name, head));
+      _add(PmdHit(PmdKind.file, path, 0, d, name, head));
     }
-    final stem = _stem(e.name);
+    final stem = _stem(name);
     for (final f in found) {
       if (named && f.start == 0) continue;
       final kind = f.start == 0 ? PmdKind.file : PmdKind.embed;
@@ -297,7 +350,11 @@ class _PmdPageState extends State<PmdPage> {
       if (i?.ppzFile != null) '使うPPZ: ${i!.ppzFile}',
       if (h.isSong && h.kind != PmdKind.file && i != null && !i.exactEnd)
         '※終わりの位置が分からなかったので、後ろに余分なデータが付いています（再生には影響しないことが多いです）',
-      if (h.kind == PmdKind.file && i == null) '※中身がPMDの形式と一致しませんでした（名前だけで拾っています）',
+      if (h.kind == PmdKind.file && i == null && pmdSongExts.contains(_ext(h.name)))
+        '※中身がPMDの形式と一致しませんでした（名前だけで拾っています）',
+      if (_otherSongExts.contains(_ext(h.name)))
+        '※PMDではない曲です（${_ext(h.name) == 'WM' ? 'MUSIC.COM' : 'S20S_4.BIN'} で鳴らす形式）。音楽アプリに入れるときは、一緒に見つかったドライバも選んでください',
+      if (h.kind == PmdKind.driver) '※ゲームの音楽ドライバです。WM・PAIの曲を音楽アプリで鳴らすのに使います',
     ];
     showDialog<void>(
       context: context,

@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'disk.dart';
+import 'archive.dart';
+import 'archive_page.dart';
 import 'pmd_page.dart';
 import 'sjis.dart';
 import 'zip.dart';
@@ -401,6 +403,13 @@ class _HomePageState extends State<HomePage> {
     } else {
       final fat = _fat!;
       final data = fat.readFile(e);
+      final arc = openArchive(data);
+      if (arc != null) {
+        Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => ArchivePage(name: e.name, bytes: data, arc: arc),
+        ));
+        return;
+      }
       var cur = e;
       Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (_) => PreviewPage(
@@ -655,7 +664,7 @@ class _HomePageState extends State<HomePage> {
                         }
                       },
                       itemBuilder: (_) => [
-                        const PopupMenuItem(value: 'pmd', child: Text('PMD曲データを抜き出す')),
+                        const PopupMenuItem(value: 'pmd', child: Text('曲データを抜き出す（PMD・WM・PAI）')),
                         const PopupMenuItem(value: 'info', child: Text('ディスク情報')),
                         if (_fat != null) ...const [
                           PopupMenuItem(value: 'folder', child: Text('このフォルダをZIPで保存')),
