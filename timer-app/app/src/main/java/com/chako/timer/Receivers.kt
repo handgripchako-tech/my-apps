@@ -37,8 +37,11 @@ class AlarmReceiver : BroadcastReceiver() {
 
 class StopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val job = Store.get(context, intent.getIntExtra("id", -1)) ?: return
-        if (intent.getBooleanExtra("daily", false)) {
+        val id = intent.getIntExtra("id", -1)
+        val daily = intent.getBooleanExtra("daily", false)
+        Stops.remove(context, id, daily)
+        val job = Store.get(context, id) ?: return
+        if (daily) {
             if (!job.enabled) return
             if (job.once) {
                 // 1回だけ: 終了まで済んだので自動OFF
@@ -60,9 +63,22 @@ class StopReceiver : BroadcastReceiver() {
     }
 }
 
+/** 通知の「表示する」: 隠したフローティングを元に戻す */
+class UnhideReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val svc = MacroService.instance
+        if (svc != null) {
+            svc.unhideFloating()
+        } else {
+            context.getSystemService(NotificationManager::class.java).cancel(FloatingStop.HIDDEN_NOTIF_ID)
+        }
+    }
+}
+
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Scheduler.scheduleAll(context)
+        Scheduler.restoreStops(context)
     }
 }
 

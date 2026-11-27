@@ -36,23 +36,45 @@ class MacroService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var gen = 0
+    private var floating: FloatingStop? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        floating = FloatingStop(this).also { it.start() }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         instance = null
+        floating?.stop()
+        floating = null
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
         instance = null
+        floating?.stop()
+        floating = null
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    fun refreshFloating() {
+        floating?.refresh()
+    }
+
+    fun unhideFloating() {
+        floating?.unhide()
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = event.packageName?.toString() ?: return
+        // 自分の窓・通知バー・キーボードは「前面のアプリ」として数えない
+        if (pkg == packageName || pkg == "com.android.systemui" || pkg.contains("inputmethod") ||
+            pkg.contains("honeyboard")
+        ) return
+        floating?.fgPkg = pkg
+    }
     override fun onInterrupt() {}
 
     fun runJob(job: Job, force: Boolean) {

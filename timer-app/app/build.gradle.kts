@@ -11,8 +11,8 @@ android {
         applicationId = "com.chako.timer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.10"
+        versionCode = 13
+        versionName = "1.12"
     }
 
     // 毎回同じ署名にして、APK を上書きインストールできるようにする（個人用の固定キー）

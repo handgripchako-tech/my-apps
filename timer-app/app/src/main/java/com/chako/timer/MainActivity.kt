@@ -153,6 +153,22 @@ class MainActivity : Activity() {
         }
         root.addView(pinRow)
 
+        val flRow = LinearLayout(this)
+        flRow.orientation = LinearLayout.HORIZONTAL
+        flRow.gravity = Gravity.CENTER_VERTICAL
+        flRow.addView(
+            tv("終了予定をフローティング表示（ゲーム中も残り時間を表示・変更）", 13f, Color.LTGRAY),
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val flSw = Switch(this)
+        flSw.isChecked = FloatingStop.enabled(this)
+        flSw.setOnCheckedChangeListener { _, on ->
+            FloatingStop.setEnabled(this, on)
+            MacroService.instance?.refreshFloating()
+        }
+        flRow.addView(flSw)
+        root.addView(flRow)
+
         root.addView(View(this), LinearLayout.LayoutParams(1, dp(12)))
         val jobs = Store.load(this).sortedWith(compareBy({ it.hour }, { it.minute }))
         if (jobs.isEmpty()) root.addView(tv("まだ登録がありません", 14f, Color.GRAY))
@@ -211,6 +227,11 @@ class MainActivity : Activity() {
             (if (j.stopMin > 0) " ／ ${j.stopMin}分後に終了" else "") +
             (if (j.stopAt >= 0 && !j.noLaunch) " ／ 毎日%02d:%02dに終了".format(j.stopAt / 60, j.stopAt % 60) else "")
         c.addView(tv(info, 12f, Color.GRAY))
+        val pend = Stops.all(this).filter { it.id == j.id && it.at > System.currentTimeMillis() }
+        for (s in pend) {
+            val t = java.text.SimpleDateFormat("M/d HH:mm", java.util.Locale.JAPAN).format(java.util.Date(s.at))
+            c.addView(tv("⏱ 次の終了予定: $t", 12f, Color.parseColor("#FFB74D")))
+        }
 
         val btns = LinearLayout(this)
         btns.orientation = LinearLayout.HORIZONTAL

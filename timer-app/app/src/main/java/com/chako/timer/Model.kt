@@ -91,6 +91,43 @@ object Store {
     fun readLog(c: Context): String = p(c).getString("log", "") ?: ""
 }
 
+/** 予約中の「終了」1回分。daily=true は毎日の終了時刻、false は起動から○分後。 */
+data class PendingStop(val id: Int, val daily: Boolean, val at: Long) {
+    val key: String get() = (if (daily) "d" else "r") + id
+}
+
+/** いま予約中の終了時刻の控え（フローティング表示と時間変更に使う）。 */
+object Stops {
+    private fun p(c: Context) = c.getSharedPreferences("stops", Context.MODE_PRIVATE)
+    private fun key(id: Int, daily: Boolean) = (if (daily) "d" else "r") + id
+
+    fun set(c: Context, id: Int, daily: Boolean, at: Long) {
+        p(c).edit().putLong(key(id, daily), at).apply()
+    }
+
+    fun remove(c: Context, id: Int, daily: Boolean) {
+        p(c).edit().remove(key(id, daily)).apply()
+    }
+
+    /** 予約中のものを早い順に返す（とっくに過ぎた古い控えは捨てる）。 */
+    fun all(c: Context): List<PendingStop> {
+        val now = System.currentTimeMillis()
+        val out = mutableListOf<PendingStop>()
+        val old = mutableListOf<String>()
+        for ((k, v) in p(c).all) {
+            val at = v as? Long ?: continue
+            val id = k.drop(1).toIntOrNull() ?: continue
+            if (at < now - 10 * 60_000L) old.add(k) else out.add(PendingStop(id, k.startsWith("d"), at))
+        }
+        if (old.isNotEmpty()) {
+            val e = p(c).edit()
+            for (k in old) e.remove(k)
+            e.apply()
+        }
+        return out.sortedBy { it.at }
+    }
+}
+
 object Scheduler {
     private fun pending(c: Context, id: Int): PendingIntent =
         PendingIntent.getBroadcast(
@@ -133,22 +170,28 @@ object Scheduler {
         scheduleStopAt(c, j)
     }
 
-    private fun stopAtPending(c: Context, j: Job): PendingIntent =
+    private fun stopAtPending(c: Context, j: Job): PendingIntent = stopAtPending(c, j.id)
+
+    private fun stopAtPending(c: Context, id: Int): PendingIntent =
         PendingIntent.getBroadcast(
-            c, -j.id - 1_000_000_000,
-            Intent(c, StopReceiver::class.java).putExtra("id", j.id).putExtra("daily", true),
+            c, -id - 1_000_000_000,
+            Intent(c, StopReceiver::class.java).putExtra("id", id).putExtra("daily", true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-    /** 毎日の終了時刻（起動のしかたに関係なく動く）を予約する。 */
-    fun scheduleStopAt(c: Context, j: Job) {
+    /**
+     * 毎日の終了時刻（起動のしかたに関係なく動く）を予約する。
+     * afterMs を渡すと、その時刻より後の最初の終了時刻にする（今日の分を飛ばすときに使う）。
+     */
+    fun scheduleStopAt(c: Context, j: Job, afterMs: Long? = null) {
         val am = c.getSystemService(AlarmManager::class.java)
         if (!j.enabled || j.stopAt < 0) {
             am.cancel(stopAtPending(c, j))
+            Stops.remove(c, j.id, true)
             return
         }
         // 1回だけ（まだ起動前）の予定は、起動より後の最初の終了時刻にする
-        val baseMs = if (j.once && !j.noLaunch && !j.onceStarted) nextTime(j)
+        val baseMs = afterMs ?: if (j.once && !j.noLaunch && !j.onceStarted) nextTime(j)
         else System.currentTimeMillis() + 1000
         val cal = Calendar.getInstance()
         cal.timeInMillis = baseMs
@@ -159,6 +202,7 @@ object Scheduler {
         if (cal.timeInMillis <= baseMs) cal.add(Calendar.DAY_OF_YEAR, 1)
         try {
             am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, cal.timeInMillis, stopAtPending(c, j))
+            Stops.set(c, j.id, true, cal.timeInMillis)
         } catch (e: SecurityException) {
             Store.log(c, "終了時刻の予約に失敗（権限）")
         }
@@ -166,6 +210,52 @@ object Scheduler {
 
     fun cancelStopAt(c: Context, j: Job) {
         c.getSystemService(AlarmManager::class.java).cancel(stopAtPending(c, j))
+        Stops.remove(c, j.id, true)
+    }
+
+    /** 予約中の終了（今回の1回分）を、指定した時刻に付け替える。 */
+    fun setStopTime(c: Context, id: Int, daily: Boolean, at: Long): Boolean {
+        val am = c.getSystemService(AlarmManager::class.java)
+        val pi = if (daily) stopAtPending(c, id) else stopPending(c, id)
+        return try {
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            Stops.set(c, id, daily, at)
+            true
+        } catch (e: SecurityException) {
+            Store.log(c, "終了の予約変更に失敗（権限）")
+            false
+        }
+    }
+
+    /** 今回の終了をやめる。毎日の終了なら次の日の分を予約し直す。 */
+    fun skipStop(c: Context, id: Int, daily: Boolean) {
+        val am = c.getSystemService(AlarmManager::class.java)
+        if (!daily) {
+            am.cancel(stopPending(c, id))
+            Stops.remove(c, id, false)
+            return
+        }
+        val cur = Stops.all(c).firstOrNull { it.id == id && it.daily }?.at ?: System.currentTimeMillis()
+        am.cancel(stopAtPending(c, id))
+        Stops.remove(c, id, true)
+        val j = Store.get(c, id) ?: return
+        if (j.once) {
+            // 1回だけの予定は、終了を取り消したらここでOFFにする
+            j.enabled = false
+            Store.put(c, j)
+            schedule(c, j)
+        } else {
+            scheduleStopAt(c, j, maxOf(cur, System.currentTimeMillis()) + 60_000L)
+        }
+    }
+
+    /** 予約中の終了を、いますぐ実行する。 */
+    fun fireStopNow(c: Context, id: Int, daily: Boolean) {
+        val am = c.getSystemService(AlarmManager::class.java)
+        am.cancel(if (daily) stopAtPending(c, id) else stopPending(c, id))
+        StopReceiver().onReceive(
+            c, Intent(c, StopReceiver::class.java).putExtra("id", id).putExtra("daily", daily)
+        )
     }
 
     fun cancel(c: Context, j: Job) {
@@ -174,9 +264,11 @@ object Scheduler {
         cancelStopAt(c, j)
     }
 
-    private fun stopPending(c: Context, j: Job): PendingIntent =
+    private fun stopPending(c: Context, j: Job): PendingIntent = stopPending(c, j.id)
+
+    private fun stopPending(c: Context, id: Int): PendingIntent =
         PendingIntent.getBroadcast(
-            c, -j.id, Intent(c, StopReceiver::class.java).putExtra("id", j.id),
+            c, -id, Intent(c, StopReceiver::class.java).putExtra("id", id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -187,6 +279,7 @@ object Scheduler {
         val at = System.currentTimeMillis() + j.stopMin * 60_000L
         try {
             am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, stopPending(c, j))
+            Stops.set(c, j.id, false, at)
         } catch (e: SecurityException) {
             Store.log(c, "終了の予約に失敗（権限）")
         }
@@ -194,6 +287,14 @@ object Scheduler {
 
     fun cancelStop(c: Context, j: Job) {
         c.getSystemService(AlarmManager::class.java).cancel(stopPending(c, j))
+        Stops.remove(c, j.id, false)
+    }
+
+    /** 再起動で消えた「起動から○分後」の終了を、残っていれば予約し直す。 */
+    fun restoreStops(c: Context) {
+        for (s in Stops.all(c)) {
+            if (!s.daily && s.at > System.currentTimeMillis()) setStopTime(c, s.id, false, s.at)
+        }
     }
 
     fun scheduleAll(c: Context) {
