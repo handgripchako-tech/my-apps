@@ -23,9 +23,29 @@ class Pmd {
   Pmd._();
 
   /// PMD曲の拡張子(中身かどうかはネイティブ側でも確認する)
-  static const songExts = {'m', 'm2', 'mz', 'mp', 'mdt'};
+  static const songExts = {'m', 'm2', 'mz', 'mp', 'mdt', 'wm'};
 
   static bool _isMdt(String path) => path.toLowerCase().endsWith('.mdt');
+
+  /// silky's などの WM 曲。ゲームの MUSIC.COM を音色ファイル置き場に入れて、本物のドライバで鳴らす
+  static bool _isWm(String path) => path.toLowerCase().endsWith('.wm');
+
+  /// ネイティブ側の関数名の頭（pmd / mdt / wm）
+  static String _kind(String path) =>
+      _isMdt(path) ? 'mdt' : (_isWm(path) ? 'wm' : 'pmd');
+
+  /// 本体の保存用の拡張子
+  static String _srcExt(String path) =>
+      _isMdt(path) ? '.mdt' : (_isWm(path) ? '.wm' : '.m');
+
+  /// WM の曲を鳴らすためのドライバ(MUSIC.COM)が保存済みか
+  static Future<bool> hasWmDriver() async {
+    final d = await libDir();
+    for (final n in const ['MUSIC.COM', 'music.com', 'Music.com']) {
+      if (await File('${d.path}/$n').exists()) return true;
+    }
+    return false;
+  }
 
   static bool isSong(String name) {
     final dot = name.lastIndexOf('.');
@@ -68,6 +88,8 @@ class Pmd {
   static File srcFile(Directory pd, String stem) {
     final t = File('${pd.path}/pmdsrc/$stem.mdt');
     if (t.existsSync()) return t;
+    final w = File('${pd.path}/pmdsrc/$stem.wm');
+    if (w.existsSync()) return w;
     return File('${pd.path}/pmdsrc/$stem.m');
   }
 
@@ -79,7 +101,7 @@ class Pmd {
       Directory pd, String srcPath, String stem) async {
     final d = Directory('${pd.path}/pmdsrc');
     if (!await d.exists()) await d.create(recursive: true);
-    await File(srcPath).copy('${d.path}/$stem${_isMdt(srcPath) ? '.mdt' : '.m'}');
+    await File(srcPath).copy('${d.path}/$stem${_srcExt(srcPath)}');
   }
 
   // ---- ネイティブ呼び出し(同時に1つだけ) --------------------------
@@ -96,11 +118,10 @@ class Pmd {
   /// PMDとして読めて、長さがあるか調べる(変換はしない)
   static Future<bool> probe(String pmdPath) async {
     final libPath = (await libDir()).path;
-    final isMdt = _isMdt(pmdPath);
+    final kind = _kind(pmdPath);
     final n = await _serial(() => Isolate.run(() {
           final so = DynamicLibrary.open('libpmdwav.so');
-          final fn = so.lookupFunction<_ProbeC, _ProbeD>(
-              isMdt ? 'mdt_probe' : 'pmd_probe');
+          final fn = so.lookupFunction<_ProbeC, _ProbeD>('${kind}_probe');
           final a = pmdPath.toNativeUtf8();
           final b = libPath.toNativeUtf8();
           final title = calloc<Uint8>(256).cast<Utf8>();
@@ -126,11 +147,10 @@ class Pmd {
     int rate = 44100,
   }) async {
     final libPath = (await libDir()).path;
-    final isMdt = _isMdt(pmdPath);
+    final kind = _kind(pmdPath);
     final code = await _serial(() => Isolate.run(() {
           final so = DynamicLibrary.open('libpmdwav.so');
-          final fn = so.lookupFunction<_ToWavC, _ToWavD>(
-              isMdt ? 'mdt_to_wav' : 'pmd_to_wav');
+          final fn = so.lookupFunction<_ToWavC, _ToWavD>('${kind}_to_wav');
           final a = pmdPath.toNativeUtf8();
           final b = libPath.toNativeUtf8();
           final c = wavPath.toNativeUtf8();

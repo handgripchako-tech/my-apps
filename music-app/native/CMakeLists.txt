@@ -15,6 +15,8 @@ set(PM ${CMAKE_CURRENT_SOURCE_DIR}/pmdmini)
 add_library(pmdwav SHARED
     pmd_wav.c
     mdrv2.cpp
+    pc98drv.cpp
+    x86emu.cpp
     ${PM}/pmdmini.c
     ${PM}/fmgen/file.cpp
     ${PM}/fmgen/fmtimer.cpp
