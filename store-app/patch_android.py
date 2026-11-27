@@ -44,6 +44,9 @@ def patch_manifest():
     if add:
         s = s.replace("<application", add + "<application", 1)
     s = re.sub(r'android:label="[^"]*"', 'android:label="ストア"', s, count=1)
+    # 自宅サーバー（Tailscale の http://100.x.x.x:5000）から APK を取るため平文通信を許可
+    if "usesCleartextTraffic" not in s:
+        s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
     if "FileProvider" not in s:
         s = s.replace("</application>", PROVIDER + "</application>", 1)
     open(MANIFEST, "w", encoding="utf-8").write(s)

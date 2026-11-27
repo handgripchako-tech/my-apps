@@ -1,60 +1,84 @@
 name: publish-release
-description: gh コマンドが無い self-hosted runner でも、最新APKのリリースを作り直す（curl 版）。あわせて古い成果物(artifact)を消す
+description: >-
+  ビルドしたAPKを自宅サーバーのAPK置き場（~/apk、/apk/ ページ）に届ける。GitHub の Releases には置かない。
+  self-hosted runner（サーバー上）なら直接置く。GitHub のマシンなら一時ファイル（artifact、1日で消える）にして、
+  サーバーの apk_sync.py pull が取りに来て置き、artifact を消す。
+  名前は昔のまま（各ワークフローを書き換えずに済むように）。
 inputs:
   tag:
-    description: リリースのタグ（例 gallery-latest）
+    description: アプリの識別名（例 gallery-latest）
     required: true
   apk:
-    description: 添付するAPKのファイル名
+    description: APKのファイル名（例 gallery-app-v12.apk）
     required: true
   title:
-    description: リリースの題名
+    description: 題名（例 最新のギャラリーAPK）
     required: true
   token:
-    description: GITHUB_TOKEN
+    description: GITHUB_TOKEN（古い artifact の掃除に使う）
     required: true
 runs:
   using: composite
   steps:
-    - shell: bash
+    - name: サーバーのAPK置き場に置く（self-hosted）
+      if: runner.environment != 'github-hosted'
+      shell: bash
       env:
         TAG: ${{ inputs.tag }}
         APK: ${{ inputs.apk }}
         TITLE: ${{ inputs.title }}
+      run: |
+        set -e
+        S="$GITHUB_WORKSPACE/apk_sync.py"; [ -f "$S" ] || S="$HOME/apk_sync.py"
+        N=""; [ -f release-notes.md ] && N=release-notes.md
+        python3 "$S" add "$TAG" "$APK" --notes "$N" --title "$TITLE"
+        echo "置き場: https://test-server.tail71fb16.ts.net/apk/#$TAG"
+
+    - name: サーバー受け渡し用にまとめる（GitHub のマシン）
+      if: runner.environment == 'github-hosted'
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        APK: ${{ inputs.apk }}
+        TITLE: ${{ inputs.title }}
+      run: |
+        set -e
+        rm -rf "$RUNNER_TEMP/apkpkg" && mkdir -p "$RUNNER_TEMP/apkpkg"
+        cp "$APK" "$RUNNER_TEMP/apkpkg/"
+        [ -f release-notes.md ] && cp release-notes.md "$RUNNER_TEMP/apkpkg/"
+        APP="${TITLE#最新の}"; APP="${APP%APK}"
+        jq -n --arg tag "$TAG" --arg apk "$(basename "$APK")" --arg title "$TITLE" --arg app "$APP" \
+          --arg time "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" \
+          '{tag:$tag,apk:$apk,title:$title,app:$app,time:$time}' > "$RUNNER_TEMP/apkpkg/info.json"
+        cat "$RUNNER_TEMP/apkpkg/info.json"
+
+    - name: 受け渡し用の一時ファイル（1日で消える）
+      if: runner.environment == 'github-hosted'
+      uses: actions/upload-artifact@v4
+      with:
+        name: apkpkg-${{ inputs.tag }}-${{ github.run_id }}
+        path: ${{ runner.temp }}/apkpkg/
+        retention-days: 1
+        compression-level: 0
+
+    - name: 古い成果物（artifact）を消す
+      shell: bash
+      env:
         GH_TOKEN: ${{ inputs.token }}
         REPO: ${{ github.repository }}
       run: |
-        set -e
-        API="https://api.github.com/repos/$REPO"
-        auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
-        # 前のリリースとタグを消す
-        old=$(curl -sS "${auth[@]}" "$API/releases/tags/$TAG" | jq -r '.id // empty')
-        if [ -n "$old" ]; then curl -sS -X DELETE "${auth[@]}" "$API/releases/$old" >/dev/null; fi
-        curl -sS -X DELETE "${auth[@]}" "$API/git/refs/tags/$TAG" >/dev/null || true
-        # 新しいリリースを作る
-        rid=$(jq -n --arg t "$TAG" --arg n "$TITLE" --rawfile b release-notes.md --arg c "$GITHUB_SHA" \
-          '{tag_name:$t,name:$n,body:$b,target_commitish:$c}' \
-          | curl -sS -X POST "${auth[@]}" -d @- "$API/releases" | jq -r '.id // empty')
-        [ -n "$rid" ] || { echo "リリースを作れませんでした"; exit 1; }
-        # APKを添付する
-        curl -sS --fail -X POST "${auth[@]}" -H "Content-Type: application/vnd.android.package-archive" \
-          --data-binary @"$APK" "https://uploads.github.com/repos/$REPO/releases/$rid/assets?name=$APK" >/dev/null
-        echo "公開しました: https://github.com/$REPO/releases/tag/$TAG"
-        # 古い成果物を消す（名前ごとに最新1件だけ残す）。失敗しても無視する
+        # サーバー受け渡し待ち（apkpkg-*）以外の artifact は全部消す。失敗しても無視する
         (
-          tmp=$(mktemp)
-          page=1
-          while [ "$page" -le 20 ]; do
-            r=$(curl -sS "${auth[@]}" "$API/actions/artifacts?per_page=100&page=$page")
-            n=$(echo "$r" | jq '.artifacts | length')
-            [ "$n" -gt 0 ] || break
-            echo "$r" | jq -c '.artifacts[] | {id,name,created_at}' >> "$tmp"
-            page=$((page+1))
-          done
+          API="https://api.github.com/repos/$REPO"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
           cnt=0
-          for id in $(jq -s -r 'group_by(.name) | map(sort_by(.created_at) | reverse | .[1:][].id) | .[]' "$tmp"); do
-            curl -sS -X DELETE "${auth[@]}" "$API/actions/artifacts/$id" >/dev/null && cnt=$((cnt+1))
+          for page in 1 2 3 4 5; do
+            ids=$(curl -sS "${auth[@]}" "$API/actions/artifacts?per_page=100&page=$page" \
+              | jq -r '.artifacts[]? | select(.name | startswith("apkpkg-") | not) | .id')
+            [ -n "$ids" ] || break
+            for id in $ids; do
+              curl -sS -X DELETE "${auth[@]}" "$API/actions/artifacts/$id" >/dev/null && cnt=$((cnt+1))
+            done
           done
-          rm -f "$tmp"
           echo "古い成果物を ${cnt} 件消しました"
         ) || echo "成果物の掃除に失敗しました（無視します）"

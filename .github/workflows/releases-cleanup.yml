@@ -1,0 +1,30 @@
+name: releases-cleanup
+# 手動で実行: このリポジトリの Releases（古いAPK）と -latest タグを全部消す。
+# APKはサーバーの置き場（~/apk）に移してあるので、GitHub には残さない。元に戻せないので注意。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Releases とタグを消す
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          API="https://api.github.com/repos/$REPO"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          n=0
+          for id in $(curl -sS "${auth[@]}" "$API/releases?per_page=100" | jq -r '.[].id'); do
+            curl -sS -X DELETE "${auth[@]}" "$API/releases/$id" >/dev/null && n=$((n+1))
+          done
+          echo "Releases を ${n} 件消しました"
+          t=0
+          for tag in $(curl -sS "${auth[@]}" "$API/tags?per_page=100" | jq -r '.[].name' | grep -- '-latest$'); do
+            curl -sS -X DELETE "${auth[@]}" "$API/git/refs/tags/$tag" >/dev/null && t=$((t+1))
+          done
+          echo "タグを ${t} 件消しました"

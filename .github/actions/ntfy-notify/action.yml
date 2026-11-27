@@ -1,5 +1,5 @@
 name: ntfy-notify
-description: ビルド結果をntfyで通知する（タップでAPKページ/ログへ）。トピック未設定なら何もしない
+description: ビルド結果をntfyで通知する（タップでサーバーのAPKページ/ログへ）。トピック未設定なら何もしない
 inputs:
   topic:
     description: ntfyのトピック名（secrets.NTFY_TOPIC を渡す）
@@ -25,11 +25,14 @@ runs:
         STATUS: ${{ inputs.status }}
         REPO: ${{ github.repository }}
         RUN_ID: ${{ github.run_id }}
+        RUNNER_ENV: ${{ runner.environment }}
       run: |
         [ -z "$TOPIC" ] && exit 0
         if [ "$STATUS" = "success" ]; then
-          title="${APP}のビルド完了"; msg="タップしてAPKのページを開く"
-          click="https://github.com/$REPO/releases/tag/$TAG"; tags='["white_check_mark"]'; prio=3
+          # GitHub のマシンでビルドしたときは、サーバーが取り込んだ時点でサーバーから通知する
+          [ "$RUNNER_ENV" = "github-hosted" ] && exit 0
+          title="${APP}のビルド完了"; msg="タップしてAPKのページを開く（サーバー）"
+          click="https://test-server.tail71fb16.ts.net/apk/#$TAG"; tags='["white_check_mark"]'; prio=3
         else
           title="${APP}のビルド失敗"; msg="タップしてログを開く"
           click="https://github.com/$REPO/actions/runs/$RUN_ID"; tags='["x"]'; prio=4

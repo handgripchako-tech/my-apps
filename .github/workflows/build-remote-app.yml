@@ -36,12 +36,6 @@ jobs:
         working-directory: remote-app
         run: gradle --no-daemon assembleRelease
 
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true # 保存容量が満杯でも、リリースは作る
-        with:
-          name: remote-apk
-          path: remote-app/app/build/outputs/apk/release/app-release.apk
-
       - name: 更新内容を作成
         uses: ./.github/actions/release-notes
         with:

@@ -7,7 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-const repo = 'handgripchako-tech/my-apps';
+// APKは自宅サーバーの置き場（/apk/）から取る。Tailscale が繋がっていれば外でも使える。
+const defaultServer = 'http://100.102.7.80:5000';
 const channel = MethodChannel('chako/store');
 
 // ---- PC-98 風の配色（music-app と同じ） ----
@@ -133,14 +134,15 @@ class AppDef {
 
 class Entry {
   final AppDef def;
-  final int assetId;
+  final String assetId; // サーバー上のファイル名（版ごとに変わる）
   final String assetName;
+  final String url; // サーバー上の場所（/apk/dl/...）
   final int size;
   final DateTime time;
   Map? installed; // versionName / versionCode / updated(ms)
   String? recordedAsset; // ストアが入れた時の assetId
   String notes = ''; // リリースの更新内容
-  Entry(this.def, this.assetId, this.assetName, this.size, this.time);
+  Entry(this.def, this.assetId, this.assetName, this.url, this.size, this.time);
 
   bool get isInstalled => installed != null;
 
@@ -151,7 +153,7 @@ class Entry {
 
   bool get hasUpdate {
     if (!isInstalled) return false;
-    if (recordedAsset != null) return recordedAsset != '$assetId';
+    if (recordedAsset != null) return recordedAsset != assetId;
     final up = installed!['updated'];
     if (up is int) {
       return time.isAfter(DateTime.fromMillisecondsSinceEpoch(up)
@@ -168,7 +170,7 @@ class StorePage extends StatefulWidget {
 }
 
 class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
-  String token = '';
+  String server = defaultServer;
   bool loading = false;
   String? error;
   List<Entry> entries = [];
@@ -195,7 +197,7 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
 
   Future<void> _init() async {
     prefs = await SharedPreferences.getInstance();
-    token = prefs!.getString('gh_token') ?? '';
+    server = prefs!.getString('server') ?? defaultServer;
     _cleanApks();
     await load();
   }
@@ -208,44 +210,10 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  // 公開リポジトリなのでトークンは任意（入れると取得回数の上限が増えるだけ）
-  Map<String, String> get _headers => {
-        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': 'chako-store',
-      };
+  Uri _u(String path) => Uri.parse(server.replaceAll(RegExp(r'/+$'), '') + path);
 
-  // 古いトークン（非公開リポジトリ用）が残っていて 401 になったら、
-  // トークンを消してトークン無しで読み直す（公開リポジトリなので読める）
-  Future<http.Response> _api(Uri u, [Map<String, String> extra = const {}]) async {
-    var r = await http.get(u, headers: {..._headers, ...extra});
-    if (r.statusCode == 401 && token.isNotEmpty) {
-      token = '';
-      await prefs?.remove('gh_token');
-      r = await http.get(u, headers: {..._headers, ...extra});
-    }
-    return r;
-  }
-
-  Future<List<AppDef>> _fetchDefs() async {
-    try {
-      final r = await _api(
-        Uri.parse('https://api.github.com/repos/$repo/contents/store-app/apps.json'),
-        {'Accept': 'application/vnd.github.raw+json'},
-      );
-      if (r.statusCode == 200) {
-        final list = jsonDecode(utf8.decode(r.bodyBytes)) as List;
-        await prefs?.setString('apps_json', utf8.decode(r.bodyBytes));
-        return list.map((e) => AppDef.fromJson(Map<String, dynamic>.from(e))).toList();
-      }
-    } catch (_) {}
-    final cached = prefs?.getString('apps_json');
-    if (cached != null) {
-      final list = jsonDecode(cached) as List;
-      return list.map((e) => AppDef.fromJson(Map<String, dynamic>.from(e))).toList();
-    }
-    return [];
-  }
+  List<AppDef> _defsFrom(List list) =>
+      list.map((e) => AppDef.fromJson(Map<String, dynamic>.from(e))).toList();
 
   Future<void> load() async {
     setState(() {
@@ -253,31 +221,34 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
       error = null;
     });
     try {
-      final defs = await _fetchDefs();
-      final r = await _api(
-        Uri.parse('https://api.github.com/repos/$repo/releases?per_page=100'),
-      );
-      if (r.statusCode == 401 || r.statusCode == 403 || r.statusCode == 404) {
-        throw token.isEmpty
-            ? '取得回数の上限です。しばらく待つか TOKEN を入れてください (${r.statusCode})'
-            : 'トークンが違うか、権限がありません (${r.statusCode})';
+      Map<String, dynamic> j;
+      try {
+        final r = await http.get(_u('/apk/api/list')).timeout(const Duration(seconds: 15));
+        if (r.statusCode != 200) throw 'サーバーのエラー (${r.statusCode})';
+        j = Map<String, dynamic>.from(jsonDecode(utf8.decode(r.bodyBytes)));
+      } on TimeoutException {
+        throw 'サーバーにつながりません。Tailscale がオンか確認してください';
+      } on SocketException {
+        throw 'サーバーにつながりません。Tailscale がオンか確認してください';
       }
-      if (r.statusCode != 200) throw 'GitHub エラー (${r.statusCode})';
-      final releases = jsonDecode(utf8.decode(r.bodyBytes)) as List;
+      var defs = _defsFrom((j['apps'] as List?) ?? []);
+      if (defs.isNotEmpty) {
+        await prefs?.setString('apps_json', jsonEncode(j['apps']));
+      } else {
+        final cached = prefs?.getString('apps_json');
+        if (cached != null) defs = _defsFrom(jsonDecode(cached) as List);
+      }
       final list = <Entry>[];
-      for (final rel in releases) {
-        final tag = '${rel['tag_name']}';
-        if (!tag.endsWith('-latest') || rel['draft'] == true) continue;
-        final assets = (rel['assets'] as List).where((a) => '${a['name']}'.endsWith('.apk')).toList();
-        if (assets.isEmpty) continue;
-        final a = assets.first;
+      for (final it in (j['items'] as List?) ?? []) {
+        final m = Map<String, dynamic>.from(it);
+        final tag = '${m['tag']}';
         final def = defs.firstWhere(
           (d) => d.tag == tag,
           orElse: () => AppDef(tag, tag.replaceAll('-latest', ''), '', ''),
         );
-        final t = DateTime.tryParse('${a['updated_at'] ?? a['created_at']}') ?? DateTime.now();
-        final en = Entry(def, a['id'] as int, '${a['name']}', (a['size'] ?? 0) as int, t);
-        en.notes = ('${rel['body'] ?? ''}').trim();
+        final t = DateTime.tryParse('${m['time']}') ?? DateTime.now();
+        final en = Entry(def, '${m['file']}', '${m['file']}', '${m['url']}', (m['size'] ?? 0) as int, t);
+        en.notes = ('${m['notes'] ?? ''}').trim();
         list.add(en);
       }
       for (final e in list) {
@@ -288,7 +259,7 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
           } catch (_) {}
         }
         _settlePending(e);
-        e.recordedAsset = prefs?.getString('rec_${e.def.tag}');
+        e.recordedAsset = prefs?.getString('recf_${e.def.tag}');
       }
       // 並び: 更新あり → インストール済み → 未インストール、同順位は定義順
       int order(Entry e) => e.hasUpdate ? 0 : (e.isInstalled ? 1 : 2);
@@ -314,14 +285,14 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
     final p = prefs?.getString('pending_${e.def.tag}');
     if (p == null) return;
     final parts = p.split('|');
-    if (parts.length != 2) {
+    if (parts.length != 2 || !parts[0].endsWith('.apk')) { // 昔（GitHub時代）の記録は捨てる
       prefs?.remove('pending_${e.def.tag}');
       return;
     }
     final ts = int.tryParse(parts[1]) ?? 0;
     final up = e.installed?['updated'];
     if (up is int && up >= ts) {
-      prefs?.setString('rec_${e.def.tag}', parts[0]);
+      prefs?.setString('recf_${e.def.tag}', parts[0]);
       prefs?.remove('pending_${e.def.tag}');
     } else if (DateTime.now().millisecondsSinceEpoch - ts > 3600 * 1000) {
       prefs?.remove('pending_${e.def.tag}');
@@ -329,35 +300,11 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
   }
 
   Future<File> _download(Entry e) async {
-    final client = HttpClient();
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
     try {
-      var req = await client.getUrl(
-          Uri.parse('https://api.github.com/repos/$repo/releases/assets/${e.assetId}'));
-      req.followRedirects = false;
-      if (token.isNotEmpty) req.headers.set('Authorization', 'Bearer $token');
-      req.headers.set('Accept', 'application/octet-stream');
+      final req = await client.getUrl(_u(e.url));
       req.headers.set('User-Agent', 'chako-store');
-      var res = await req.close();
-      if (res.statusCode == 401 && token.isNotEmpty) {
-        await res.drain();
-        token = '';
-        await prefs?.remove('gh_token');
-        req = await client.getUrl(
-            Uri.parse('https://api.github.com/repos/$repo/releases/assets/${e.assetId}'));
-        req.followRedirects = false;
-        req.headers.set('Accept', 'application/octet-stream');
-        req.headers.set('User-Agent', 'chako-store');
-        res = await req.close();
-      }
-      if (res.statusCode >= 300 && res.statusCode < 400) {
-        final loc = res.headers.value('location');
-        await res.drain();
-        if (loc == null) throw 'ダウンロード先が不明です';
-        // 認証ヘッダは外部ストレージへ渡さない
-        req = await client.getUrl(Uri.parse(loc));
-        req.headers.set('User-Agent', 'chako-store');
-        res = await req.close();
-      }
+      final res = await req.close();
       if (res.statusCode != 200) {
         await res.drain();
         throw 'ダウンロード失敗 (${res.statusCode})';
@@ -417,27 +364,27 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
 
   TextStyle get _t => const TextStyle(fontFamily: kMono, color: kTxt, fontSize: 14);
 
-  Future<void> editToken() async {
-    final c = TextEditingController(text: token);
+  Future<void> editServer() async {
+    final c = TextEditingController(text: server);
     final v = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('GITHUB トークン', style: TextStyle(color: kYellow, fontFamily: kMono, fontSize: 16)),
+        title: const Text('サーバーのアドレス', style: TextStyle(color: kYellow, fontFamily: kMono, fontSize: 16)),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text(
-            '公開リポジトリなので、トークンは無くても使えます（任意）。\n'
-            '入れると GitHub の取得回数の上限が増えます。空欄で保存すると外せます。',
+            'APKは自宅サーバー（test-server）から取ります。\n'
+            'ふつうは変えなくて大丈夫です（空にすると元に戻ります）。',
             style: TextStyle(fontSize: 12, color: kMut, fontFamily: kMono),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: c,
-            obscureText: true,
             style: _t,
+            keyboardType: TextInputType.url,
             decoration: const InputDecoration(
               border: OutlineInputBorder(borderRadius: BorderRadius.zero, borderSide: BorderSide(color: kLine)),
               enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.zero, borderSide: BorderSide(color: kLine)),
-              hintText: 'github_pat_...',
+              hintText: defaultServer,
               hintStyle: TextStyle(color: kMut),
             ),
           ),
@@ -453,8 +400,8 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
       ),
     );
     if (v == null) return;
-    token = v;
-    await prefs?.setString('gh_token', v);
+    server = v.isEmpty ? defaultServer : v;
+    await prefs?.setString('server', server);
     await load();
   }
 
@@ -643,7 +590,7 @@ class _StorePageState extends State<StorePage> with WidgetsBindingObserver {
         actions: [
           Center(child: PcBtn('再読込', onTap: loading ? null : load)),
           const SizedBox(width: 6),
-          Center(child: PcBtn('TOKEN', onTap: editToken)),
+          Center(child: PcBtn('設定', onTap: editServer)),
           const SizedBox(width: 10),
         ],
       ),

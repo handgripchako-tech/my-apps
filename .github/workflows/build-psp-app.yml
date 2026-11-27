@@ -63,12 +63,6 @@ jobs:
           echo "APK=$APK"
           [ -n "$APK" ] && cp "$APK" psp.apk
 
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true # 保存容量が満杯でも、リリースは作る
-        with:
-          name: psp-apk
-          path: psp.apk
-
       - name: 更新内容を作成
         uses: ./.github/actions/release-notes
         with:

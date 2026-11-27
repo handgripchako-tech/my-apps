@@ -60,7 +60,7 @@ jobs:
         working-directory: novel-app
         run: |
           flutter pub get
-          flutter build apk --release --target-platform android-arm64 --build-name=1.0.${{ github.run_number }} --build-number=$((1000 + ${{ github.run_number }}))
+          flutter build apk --release --target-platform android-arm64 --build-name=1.0.${{ github.run_number }} --build-number=$(( ($(date +%s) - 1577836800) / 10 ))
 
       - name: Sign with fixed key
         working-directory: novel-app
@@ -69,12 +69,6 @@ jobs:
           "$BT/apksigner" sign --ks release.jks --ks-pass pass:galleryapp --key-pass pass:galleryapp \
             --out ../novel-app.apk build/app/outputs/flutter-apk/app-release.apk
           "$BT/apksigner" verify --print-certs ../novel-app.apk | head -3
-
-      - uses: actions/upload-artifact@v4
-        continue-on-error: true # 保存容量が満杯でも、リリースは作る
-        with:
-          name: novel-app-apk
-          path: novel-app.apk
 
       - name: 更新内容を作成
         uses: ./.github/actions/release-notes

@@ -3,6 +3,7 @@
   {"tag": "launcher-latest",  "name": "ホームアプリ",       "package": "com.chako.launcher",      "desc": "軽量ランチャー"},
   {"tag": "apk-latest",       "name": "サーバーアプリ",     "package": "com.chako.testserver",    "desc": "test-server のダッシュボード"},
   {"tag": "timer-latest",     "name": "時限起動",           "package": "com.chako.timer",         "desc": "決めた時刻に別アプリを自動起動"},
+  {"tag": "wakeup-latest",    "name": "起きた目覚まし",     "package": "com.chako.wakeup",        "desc": "「起きた」と入力するまで鳴る目覚まし"},
   {"tag": "remote-latest",    "name": "リモコン",           "package": "com.chako.remote",        "desc": "別のスマホを遠隔操作"},
   {"tag": "gallery-latest",   "name": "ギャラリー",         "package": "com.chako.gallery_app",   "desc": "動画・画像の閲覧"},
   {"tag": "music-latest",     "name": "音楽プレーヤー",     "package": "com.chako.music_app",     "desc": "ノーマライズ対応プレーヤー"},
@@ -10,8 +11,12 @@
   {"tag": "mail-latest",      "name": "メーラー",           "package": "com.chako.mail_app",      "desc": "Gmail / Yahoo メール"},
   {"tag": "monitor-latest",   "name": "監視アプリ",         "package": "com.chako.monitor_app",   "desc": "サーバーの状態を見る"},
   {"tag": "novel-latest",     "name": "ノベル",             "package": "com.chako.novel_app",     "desc": "ノベルゲームの本文リーダー"},
+  {"tag": "akaiito-latest",   "name": "アカイイト",         "package": "com.chako.akaiito_app",   "desc": "アカイイト プレーヤー"},
+  {"tag": "himekoi-latest",   "name": "姫恋",               "package": "com.chako.himekoi_app",   "desc": "姫恋 プレーヤー"},
+  {"tag": "kana-latest",      "name": "加奈",               "package": "com.chako.kana_app",      "desc": "加奈…おかえり プレーヤー"},
   {"tag": "msx-latest",       "name": "MSX",                "package": "com.chako.msx_app",       "desc": "MSX エミュレータ"},
   {"tag": "np2-latest",       "name": "PC-98エミュ",        "package": "com.chako.np2",           "desc": "NP2kai ベースの PC-98 エミュレータ"},
   {"tag": "pc98disk-latest",  "name": "PC98ディスクビューア","package": "com.example.pc98disk",    "desc": "hdi/fdi の中身を見る"},
-  {"tag": "psp-latest",       "name": "PSPエミュ",          "package": "jp.chako.psp",            "desc": "PPSSPP ベース"}
+  {"tag": "psp-latest",       "name": "PSPエミュ",          "package": "jp.chako.psp",            "desc": "PPSSPP ベース"},
+  {"tag": "watamari-latest",  "name": "Watamari",           "package": "com.chako.watamari_app",  "desc": "Watamari プレーヤー"}
 ]
