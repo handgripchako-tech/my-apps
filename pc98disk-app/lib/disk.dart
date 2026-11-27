@@ -1,4 +1,4 @@
-// PC-98 ディスクイメージ (HDI / FDI / D88 / 生イメージ) と FAT12/16 の解析。
+// PC-98 ディスクイメージ (HDI / FDI / D88 / NFD / NHD / 生イメージ) と FAT12/16 の解析。
 // test/disk.js で検証済みのロジックを Dart に移したもの。
 import 'dart:io';
 import 'dart:math' as math;
@@ -110,7 +110,7 @@ class SubSource implements ByteSource {
 // ---------------------------------------------------------------------- Disk
 
 class Disk {
-  final String format; // HDI / FDI / D88 / RAW
+  final String format; // HDI / FDI / D88 / NFD / NHD / RAW
   final ByteSource src; // ヘッダを除いたデータ部
   final int sectorSize;
   final int sectors; // 1トラックあたり (不明なら0)
@@ -207,6 +207,11 @@ Disk _parseD88(ByteSource f) {
   if (lastNonEmpty < 0) {
     throw const FormatException('D88 にセクタがありません');
   }
+  return _flatten('D88', tracks, lastNonEmpty, secSize, spt);
+}
+
+/// トラックごとのセクタを R 順に並べて、ふつうのイメージにする
+Disk _flatten(String format, List<List<_D88Sec>> tracks, int lastNonEmpty, int secSize, int spt) {
   final flat = BytesBuilder(copy: false);
   var lastLen = 0;
   for (var t = 0; t <= lastNonEmpty; t++) {
@@ -223,8 +228,103 @@ Disk _parseD88(ByteSource f) {
     }
     lastLen = len;
   }
-  return Disk('D88', MemSource(flat.takeBytes()), secSize, spt, 2,
+  return Disk(format, MemSource(flat.takeBytes()), secSize, spt, 2,
       (lastNonEmpty + 2) ~/ 2, false);
+}
+
+// ------------------------------------------------------- T98-Next (NFD / NHD)
+
+bool _sig(Uint8List h, String s) {
+  if (h.length < s.length) return false;
+  for (var i = 0; i < s.length; i++) {
+    if (h[i] != s.codeUnitAt(i)) return false;
+  }
+  return true;
+}
+
+/// T98-Next のフロッピーイメージ。R0（目次が固定）と R1（トラックごとに目次）の2種類。
+Disk _parseNfd(ByteSource f) {
+  final len = f.length;
+  final h = f.read(0, len < 0x120 + 163 * 26 * 16 + 0x10 ? len : 0x120 + 163 * 26 * 16 + 0x10);
+  final r1 = _sig(h, 'T98FDDIMAGE.R1');
+  if (!r1 && !_sig(h, 'T98FDDIMAGE.R0')) {
+    throw const FormatException('NFD の印がありません');
+  }
+  final headSize = _u32(h, 0x110);
+  final tracks = <List<_D88Sec>>[];
+  var lastNonEmpty = -1, secSize = 0, spt = 0;
+  void done(int t, List<_D88Sec> secs) {
+    tracks.add(secs);
+    if (secs.isEmpty) return;
+    lastNonEmpty = t;
+    if (secSize == 0) {
+      secSize = secs[0].data.length;
+      spt = secs.length;
+    }
+  }
+
+  if (!r1) {
+    // 163トラック x 26セクタの目次。中身はヘッダの後ろに順番に並ぶ。
+    var pos = headSize;
+    for (var t = 0; t < 163; t++) {
+      final secs = <_D88Sec>[];
+      for (var i = 0; i < 26; i++) {
+        final e = 0x120 + (t * 26 + i) * 16;
+        if (e + 16 > h.length) break;
+        final c = h[e], r = h[e + 2], n = h[e + 3];
+        if (c == 0xFF || r == 0 || n > 7) continue;
+        final size = 128 << n;
+        if (pos + size > len) break;
+        secs.add(_D88Sec(r, f.read(pos, size)));
+        pos += size;
+      }
+      done(t, secs);
+    }
+  } else {
+    for (var t = 0; t < 164; t++) {
+      final off = _u32(h, 0x120 + t * 4);
+      final secs = <_D88Sec>[];
+      if (off != 0 && off + 16 <= len) {
+        final th = f.read(off, 16);
+        final ns = _u16(th, 0), nd = _u16(th, 2);
+        if (ns <= 64 && nd <= 256) {
+          final ids = f.read(off + 16, (ns + nd) * 16 <= len - off - 16 ? (ns + nd) * 16 : 0);
+          var pos = off + 16 + (ns + nd) * 16;
+          for (var i = 0; i < ns && (i + 1) * 16 <= ids.length; i++) {
+            final e = i * 16;
+            final r = ids[e + 2], n = ids[e + 3], retry = ids[e + 10];
+            if (n > 7) break;
+            final size = 128 << n;
+            if (pos + size > len) break;
+            secs.add(_D88Sec(r, f.read(pos, size)));
+            pos += size * (1 + retry);
+          }
+        }
+      }
+      done(t, secs);
+    }
+  }
+  if (lastNonEmpty < 0) {
+    throw const FormatException('NFD にセクタがありません');
+  }
+  return _flatten('NFD', tracks, lastNonEmpty, secSize, spt);
+}
+
+/// T98-Next のハードディスクイメージ
+Disk _parseNhd(ByteSource f) {
+  final h = f.read(0, 0x200 <= f.length ? 0x200 : f.length);
+  if (!_sig(h, 'T98HDDIMAGE.R0')) {
+    throw const FormatException('NHD の印がありません');
+  }
+  final headSize = _u32(h, 0x110);
+  final cyl = _u32(h, 0x114);
+  final heads = _u16(h, 0x118);
+  final sectors = _u16(h, 0x11A);
+  final secSize = _u16(h, 0x11C);
+  if (!_secSizes.contains(secSize) || headSize < 0x120 || headSize > f.length) {
+    throw const FormatException('NHD のヘッダが不正です');
+  }
+  return Disk('NHD', SubSource(f, headSize, f.length - headSize), secSize, sectors, heads, cyl, true);
 }
 
 /// これより大きいイメージはメモリに載せず、読み取り専用で開く
@@ -250,6 +350,12 @@ Disk openDisk(String path) {
   try {
     if (ext == 'hdi') return _parseAnex(f, 'HDI')..image = image;
     if (ext == 'fdi') return _parseAnex(f, 'FDI')..image = image;
+    if (ext == 'nhd') return _parseNhd(f)..image = image;
+    if (ext == 'nfd') {
+      final d = _parseNfd(f);
+      f.close(); // NFD も全部メモリに展開済み（読み取り専用）
+      return d;
+    }
     if (isD88) {
       final d = _parseD88(f);
       f.close(); // D88 は全部メモリに展開済み（読み取り専用）

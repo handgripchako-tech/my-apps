@@ -710,7 +710,7 @@ class _HomePageState extends State<HomePage> {
               label: const Text('ディスクイメージを開く'),
             ),
             const SizedBox(height: 16),
-            const Text('HDI / FDI / D88 / HDM など (FAT12・FAT16)',
+            const Text('HDI / FDI / D88 / NFD / NHD / HDM など (FAT12・FAT16)',
                 textAlign: TextAlign.center),
             if (error != null) ...[
               const SizedBox(height: 16),
