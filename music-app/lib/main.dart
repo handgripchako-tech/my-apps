@@ -121,6 +121,7 @@ class AppState {
   String? cur;
   bool shuffle;
   bool norm;
+  bool viz; // スペアナ・鍵盤の表示 (OFFなら描画も解析データの取得もしない。電池節約)
   String dir;
 
   AppState({
@@ -128,6 +129,7 @@ class AppState {
     this.cur,
     this.shuffle = false,
     this.norm = true,
+    this.viz = false,
     this.dir = '',
   }) : pls = pls ?? [];
 
@@ -157,6 +159,7 @@ class AppState {
     s.cur = j['cur']?.toString();
     s.shuffle = j['shuffle'] == true;
     s.norm = j['norm'] != false;
+    s.viz = j['viz'] == true;
     s.dir = (j['dir'] ?? '').toString();
     return s;
   }
@@ -175,6 +178,7 @@ class AppState {
         'cur': cur,
         'shuffle': shuffle,
         'norm': norm,
+        'viz': viz,
         'dir': dir,
       };
 }
@@ -653,7 +657,7 @@ class Offline {
           await h.api.measureList(pl.id);
         }
       }
-      await VizStore.prefetchAll(h);
+      if (h.S.viz) await VizStore.prefetchAll(h);
     }
 
     // 2) 足りない曲をダウンロード (Wi-Fi のときだけ。「今すぐ保存」は回線を問わない)
@@ -1224,6 +1228,13 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
     _save();
     _notify();
     toast(S.shuffle ? 'シャッフル ON' : 'シャッフル OFF');
+  }
+
+  void toggleViz() {
+    S.viz = !S.viz;
+    _save();
+    _notify();
+    toast(S.viz ? 'スペアナ ON' : 'スペアナ OFF');
   }
 
   Future<void> toggleNorm() async {
@@ -1976,7 +1987,7 @@ class _HomePageState extends State<HomePage> {
                 fontFamily: kMono),
           )),
           Text(h.subText, maxLines: 1, overflow: TextOverflow.ellipsis, style: kMutS),
-          RepaintBoundary(child: VizPanel(h: h, item: it)),
+          if (h.S.viz) RepaintBoundary(child: VizPanel(h: h, item: it)),
           _seekBar(),
         ],
       ),
@@ -2067,6 +2078,8 @@ class _HomePageState extends State<HomePage> {
             Expanded(child: StatCell('ノーマライズ', h.S.norm, h.toggleNorm)),
           ],
         ),
+        const SizedBox(height: 6),
+        StatCell('スペアナ', h.S.viz, h.toggleViz),
       ],
     );
   }
