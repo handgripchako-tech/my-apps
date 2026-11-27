@@ -27,8 +27,8 @@ bool isPacked(String name) => packedExts.contains(_extOf(name));
 int _u16(Uint8List b, int o) => b[o] | (b[o + 1] << 8);
 int _u32(Uint8List b, int o) => _u16(b, o) | (_u16(b, o + 2) << 16);
 
-String _name(List<int> raw, bool utf8) {
-  if (utf8) {
+String _name(List<int> raw, bool isUtf8) {
+  if (isUtf8) {
     try {
       return utf8.decode(raw);
     } catch (_) {}
