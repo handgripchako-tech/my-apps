@@ -1440,34 +1440,86 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
 }
 
 // ------------------------------------------------------------ 画面の部品 (ダッシュボード風)
-// 長い曲名を右から左へ流して全部見せる (収まるときは固定表示)
+// 省電力: 画面の動き(スペアナ・流れる曲名)は約30fpsに抑え、アプリが見えていないときは止める
+// (画面のリフレッシュレート(最大120Hz)ごとに描き直すと電池を食うため)
+class LowFps with WidgetsBindingObserver {
+  LowFps(this.onTick) {
+    WidgetsBinding.instance.addObserver(this);
+    final st = WidgetsBinding.instance.lifecycleState;
+    _visible = st == null || st == AppLifecycleState.resumed;
+  }
+  final VoidCallback onTick;
+  static const Duration period = Duration(milliseconds: 33);
+  Timer? _t;
+  bool _want = false;
+  bool _visible = true;
+  bool get isRunning => _want;
+  void start() {
+    _want = true;
+    _apply();
+  }
+
+  void stop() {
+    _want = false;
+    _apply();
+  }
+
+  void _apply() {
+    final run = _want && _visible;
+    if (run && _t == null) {
+      _t = Timer.periodic(period, (_) => onTick());
+    } else if (!run && _t != null) {
+      _t!.cancel();
+      _t = null;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _visible = state == AppLifecycleState.resumed;
+    _apply();
+  }
+
+  void dispose() {
+    stop();
+    WidgetsBinding.instance.removeObserver(this);
+  }
+}
+
+// 長い曲名を右から左へ流して全部見せる (収まるときは固定表示。run=false なら流さない)
 class Marquee extends StatefulWidget {
-  const Marquee(this.text, {super.key, required this.style});
+  const Marquee(this.text, {super.key, required this.style, this.run = true});
   final String text;
+  final bool run;
   final TextStyle style;
   @override
   State<Marquee> createState() => _MarqueeState();
 }
 
-class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
+class _MarqueeState extends State<Marquee> {
   static const double _gap = 56;
   static const double _speed = 45; // px/秒
   static const double _pause = 1.5; // 秒 (先頭で止まる)
-  late final AnimationController _ac = AnimationController(vsync: this);
+  late final LowFps _fps = LowFps(() {
+    if (mounted) setState(() {});
+  });
+  final Stopwatch _sw = Stopwatch();
   double _travel = 0;
 
   @override
   void dispose() {
-    _ac.dispose();
+    _fps.dispose();
     super.dispose();
   }
 
   void _setup(double textW) {
     final travel = textW + _gap;
-    if ((travel - _travel).abs() < 0.5 && _ac.isAnimating) return;
+    if ((travel - _travel).abs() < 0.5 && _fps.isRunning) return;
     _travel = travel;
-    _ac.duration = Duration(milliseconds: ((travel / _speed + _pause) * 1000).round());
-    _ac.repeat();
+    _sw
+      ..reset()
+      ..start();
+    _fps.start();
   }
 
   @override
@@ -1480,19 +1532,20 @@ class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
       )..layout();
       final w = tp.width;
       final h = tp.height;
-      if (w <= box.maxWidth) {
-        if (_ac.isAnimating) _ac.stop();
-        return Text(widget.text, maxLines: 1, style: widget.style);
+      if (w <= box.maxWidth || !widget.run) {
+        if (_fps.isRunning) _fps.stop();
+        _travel = 0;
+        return Text(widget.text,
+            maxLines: 1, softWrap: false, overflow: TextOverflow.clip, style: widget.style);
       }
       _setup(w);
       final total = _travel / _speed + _pause;
       return SizedBox(
         height: h,
         child: ClipRect(
-          child: AnimatedBuilder(
-            animation: _ac,
-            builder: (context, _) {
-              final sec = _ac.value * total;
+          child: Builder(
+            builder: (context) {
+              final sec = (_sw.elapsedMilliseconds / 1000.0) % total;
               final t = sec <= _pause ? 0.0 : (sec - _pause) / (total - _pause);
               return OverflowBox(
                 alignment: Alignment.centerLeft,
@@ -1913,16 +1966,17 @@ class _HomePageState extends State<HomePage> {
         children: [
           const Text('[ 再生中 ]', style: kTitle),
           const SizedBox(height: 6),
-          Marquee(
+          RepaintBoundary(child: Marquee(
             it?.t ?? '待機中',
+            run: h.player.playing,
             style: TextStyle(
                 color: it == null ? kMut : kGreen,
                 fontSize: 17,
                 fontWeight: FontWeight.bold,
                 fontFamily: kMono),
-          ),
+          )),
           Text(h.subText, maxLines: 1, overflow: TextOverflow.ellipsis, style: kMutS),
-          VizPanel(h: h, item: it),
+          RepaintBoundary(child: VizPanel(h: h, item: it)),
           _seekBar(),
         ],
       ),
@@ -2347,9 +2401,9 @@ class VizPanel extends StatefulWidget {
   State<VizPanel> createState() => _VizPanelState();
 }
 
-class _VizPanelState extends State<VizPanel> with SingleTickerProviderStateMixin {
+class _VizPanelState extends State<VizPanel> {
   static final Map<String, VizData> _cache = <String, VizData>{};
-  late final AnimationController _ac;
+  late final LowFps _ac;
   StreamSubscription<bool>? _sub;
   VizData? _data;
   String _status = '';
@@ -2363,7 +2417,9 @@ class _VizPanelState extends State<VizPanel> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _ac = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+    _ac = LowFps(() {
+      if (mounted) setState(() {});
+    });
     _sub = widget.h.player.playingStream.listen((_) => _sync());
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
@@ -2396,9 +2452,9 @@ class _VizPanelState extends State<VizPanel> with SingleTickerProviderStateMixin
   void _sync() {
     if (!mounted) return;
     if (_data != null && widget.h.player.playing) {
-      if (!_ac.isAnimating) _ac.repeat();
+      if (!_ac.isRunning) _ac.start();
     } else {
-      if (_ac.isAnimating) _ac.stop();
+      if (_ac.isRunning) _ac.stop();
       _clear();
       setState(() {});
     }
@@ -2422,7 +2478,7 @@ class _VizPanelState extends State<VizPanel> with SingleTickerProviderStateMixin
     if (!mounted) return;
     final it = widget.item;
     final my = ++_seq;
-    if (_ac.isAnimating) _ac.stop();
+    if (_ac.isRunning) _ac.stop();
     _clear();
     if (it == null) {
       setState(() {
@@ -2478,9 +2534,8 @@ class _VizPanelState extends State<VizPanel> with SingleTickerProviderStateMixin
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 4),
-      child: AnimatedBuilder(
-        animation: _ac,
-        builder: (context, _) {
+      child: Builder(
+        builder: (context) {
           _step();
           return Stack(
             children: [
