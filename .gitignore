@@ -2,3 +2,4 @@
 *.keystore
 *.bak*
 __pycache__/
+music-app/assets/*.sf2

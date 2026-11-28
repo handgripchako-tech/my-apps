@@ -14,6 +14,7 @@ set(PM ${CMAKE_CURRENT_SOURCE_DIR}/pmdmini)
 
 add_library(pmdwav SHARED
     pmd_wav.c
+    midsynth.c
     mdrv2.cpp
     pc98drv.cpp
     x86emu.cpp
@@ -42,3 +43,6 @@ target_include_directories(pmdwav PRIVATE
 
 # Android 15 以降の16KBページ端末でも読み込めるようにする
 target_link_options(pmdwav PRIVATE -Wl,-z,max-page-size=16384)
+
+# midsynth.c (sinf/tanhf など)
+target_link_libraries(pmdwav m)

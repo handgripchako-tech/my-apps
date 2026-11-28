@@ -1024,7 +1024,7 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
       if (it.isPhone &&
           off.localPath(it) == null &&
           Pmd.hasSrc(off.phoneDir, it.p.substring(6))) {
-        toast('PMDを変換中…');
+        toast(Pmd.isMidi(it.p) ? 'MIDIを音にしています…' : 'PMDを変換中…');
       }
       if (it.isPhone) await Pmd.ensureWav(off.phoneDir, it.p.substring(6));
       final local = off.localPath(it);
@@ -1379,7 +1379,8 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
         return;
       }
       // .com / .bin / .drv はゲームの音楽ドライバ(WM: MUSIC.COM, PAI: S20S_4.BIN, ファルコム: FALOPNA.DRV)
-      const companionExts = {'ppc', 'p86', 'pzi', 'pvi', 'pps', 'ppz', 'wav', 'com', 'bin', 'drv'};
+      // .sf2 は MIDI用の音色（SoundFont）。入れれば同梱の GeneralUser GS より優先される
+      const companionExts = {'ppc', 'p86', 'pzi', 'pvi', 'pps', 'ppz', 'wav', 'com', 'bin', 'drv', 'sf2'};
       final songs = <PlatformFile>[];
       var saved = 0;
       for (final f in r.files) {
@@ -1415,7 +1416,7 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
         }
         if (!await Pmd.probe(f.path!)) {
           fail++;
-          lastErr = 'PMDとして読めませんでした';
+          lastErr = Pmd.isMidi(f.name) ? 'MIDI/MUSとして読めませんでした' : 'PMDとして読めませんでした';
           continue;
         }
         final stem = _hash('pmd|${f.name}|${f.size}');
@@ -1884,7 +1885,7 @@ class _HomePageState extends State<HomePage> {
         shape: const RoundedRectangleBorder(side: BorderSide(color: kLine, width: 1.2)),
         title: Text('[ ${h.curPl.name} ]', style: kTitle),
         children: [
-          mi(c, 'PC-98の曲（PMD・WM・PAI・ファルコム）を追加', 'pmd'),
+          mi(c, 'PC-98の曲（PMD・WM・PAI・ファルコム・MIDI）を追加', 'pmd'),
           mi(c, 'スマホ内のファイルを追加', 'phone'),
           mi(c, '名前を変更', 'ren'),
           mi(c, h.curPl.offline ? 'スマホに保存: ON（タップでOFF）' : 'スマホに保存: OFF（タップでON）', 'off'),

@@ -21,6 +21,9 @@ dependencies:
 
 flutter:
   uses-material-design: true
+  # MIDI用の SoundFont（ビルド時に GeneralUser GS を取ってきて置く。リポジトリには入れない）
+  assets:
+    - assets/GeneralUser-GS.sf2
   fonts:
     - family: DotGothic16
       fonts:

@@ -54,6 +54,14 @@ jobs:
           cat android/app/src/main/AndroidManifest.xml
           cat android/app/src/main/kotlin/com/chako/music_app/MainActivity.kt || true
 
+      - name: MIDI用の SoundFont（GeneralUser GS）を取ってくる
+        working-directory: music-app
+        run: |
+          mkdir -p assets
+          curl -fsSL --retry 3 -o assets/GeneralUser-GS.sf2 \
+            https://github.com/mrbumpy409/GeneralUser-GS/raw/main/GeneralUser-GS.sf2
+          ls -l assets/
+
       - name: Build release APK (arm64)
         working-directory: music-app
         run: |

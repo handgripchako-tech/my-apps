@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 // native/pmd_wav.c の関数を呼ぶ
@@ -23,7 +24,30 @@ class Pmd {
   Pmd._();
 
   /// PMD曲の拡張子(中身かどうかはネイティブ側でも確認する)
-  static const songExts = {'m', 'm2', 'mz', 'mp', 'mdt', 'wm', 'pai', 'fal'};
+  static const songExts = {'m', 'm2', 'mz', 'mp', 'mdt', 'wm', 'pai', 'fal', 'mid', 'midi', 'mus'};
+
+  /// 標準MIDI(.mid)。SoundFont（GS対応）で鳴らす
+  static bool _isMid(String path) {
+    final p = path.toLowerCase();
+    return p.endsWith('.mid') || p.endsWith('.midi');
+  }
+
+  /// Libido7 などの KIN_BGM 形式(.MUS)。中のMIDIパートを SoundFont で鳴らす
+  static bool _isMus(String path) => path.toLowerCase().endsWith('.mus');
+
+  /// MIDIで鳴らす曲か（ファイル名や local:〇〇 でも判定できる）
+  static bool isMidi(String path) {
+    if (_isMid(path) || _isMus(path)) return true;
+    final i = path.lastIndexOf('/');
+    final fn = path.startsWith('local:') ? path.substring(6) : path.substring(i + 1);
+    final d = _dir;
+    if (d == null) return false;
+    final stem = _stemOf(fn);
+    return File('${d.path}/pmdsrc/$stem.mid').existsSync() ||
+        File('${d.path}/pmdsrc/$stem.mus').existsSync();
+  }
+
+  static Directory? _dir;
 
   static bool _isMdt(String path) => path.toLowerCase().endsWith('.mdt');
 
@@ -38,10 +62,12 @@ class Pmd {
 
   /// ネイティブ側の関数名の頭（pmd / mdt / wm）
   static String _kind(String path) =>
+      _isMid(path) ? 'mid' : _isMus(path) ? 'mus' :
       _isMdt(path) ? 'mdt' : (_isWm(path) ? 'wm' : (_isPai(path) ? 'pai' : (_isFal(path) ? 'fal' : 'pmd')));
 
   /// 本体の保存用の拡張子
   static String _srcExt(String path) =>
+      _isMid(path) ? '.mid' : _isMus(path) ? '.mus' :
       _isMdt(path) ? '.mdt' : (_isWm(path) ? '.wm' : (_isPai(path) ? '.pai' : (_isFal(path) ? '.fal' : '.m')));
 
   /// WM の曲を鳴らすためのドライバ(MUSIC.COM)が保存済みか
@@ -110,6 +136,11 @@ class Pmd {
 
   /// 保存済みの本体。東方靈異伝などの .mdt は .mdt のまま、PMDは .m で保存する。
   static File srcFile(Directory pd, String stem) {
+    _dir ??= pd;
+    final mi = File('${pd.path}/pmdsrc/$stem.mid');
+    if (mi.existsSync()) return mi;
+    final mu = File('${pd.path}/pmdsrc/$stem.mus');
+    if (mu.existsSync()) return mu;
     final t = File('${pd.path}/pmdsrc/$stem.mdt');
     if (t.existsSync()) return t;
     final w = File('${pd.path}/pmdsrc/$stem.wm');
@@ -124,6 +155,23 @@ class Pmd {
   /// PMD本体が保存されているか(同期で調べる)
   static bool hasSrc(Directory? pd, String fn) =>
       pd != null && srcFile(pd, _stemOf(fn)).existsSync();
+
+  // ---- MIDI用の SoundFont ------------------------------------------
+
+  static const _bundledSf2 = 'GeneralUser-GS.sf2';
+
+  /// 音色ファイル置き場に SoundFont が無ければ、アプリに同梱の GeneralUser GS を置く
+  static Future<void> ensureSoundFont() async {
+    final d = await libDir();
+    await for (final e in d.list()) {
+      if (e is File && e.path.toLowerCase().endsWith('.sf2') && e.lengthSync() > 1024) return;
+    }
+    final data = await rootBundle.load('assets/$_bundledSf2');
+    final tmp = File('${d.path}/$_bundledSf2.tmp');
+    await tmp.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+    await tmp.rename('${d.path}/$_bundledSf2');
+  }
 
   static Future<void> addSource(
       Directory pd, String srcPath, String stem) async {
@@ -176,6 +224,13 @@ class Pmd {
   }) async {
     final libPath = (await libDir()).path;
     final kind = _kind(pmdPath);
+    if (kind == 'mid' || kind == 'mus') {
+      try {
+        await ensureSoundFont();
+      } catch (_) {
+        return 'MIDI用の音色（SoundFont）を用意できませんでした';
+      }
+    }
     final code = await _serial(() => Isolate.run(() {
           final so = DynamicLibrary.open('libpmdwav.so');
           final fn = so.lookupFunction<_ToWavC, _ToWavD>('${kind}_to_wav');
@@ -197,6 +252,7 @@ class Pmd {
     if (code == 0) return null;
     if (code == 1) return 'PMDとして読めませんでした';
     if (code == 2) return 'WAVを書き出せませんでした';
+    if (code == 3) return 'MIDI用の音色（SoundFont）が読めませんでした';
     return '変換に失敗しました($code)';
   }
 
