@@ -2,7 +2,10 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'archive.dart';
 import 'main.dart' show PreviewPage, fmtSize;
@@ -40,6 +43,19 @@ class ArchivePage extends StatelessWidget {
       if (p != null && c.mounted) _snack(c, '${e.name} を保存しました');
     } catch (x) {
       if (c.mounted) _snack(c, '保存できませんでした: $x');
+    }
+  }
+
+  Future<void> _share(BuildContext c, ArcEntry e) async {
+    try {
+      final dir = Directory('${Directory.systemTemp.path}/share');
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+      dir.createSync(recursive: true);
+      final f = File('${dir.path}/${e.name}');
+      f.writeAsBytesSync(e.read(), flush: true);
+      await Share.shareXFiles([XFile(f.path)]);
+    } catch (x) {
+      if (c.mounted) _snack(c, '共有できませんでした: $x');
     }
   }
 
@@ -111,11 +127,18 @@ class ArchivePage extends StatelessWidget {
                 title: Text(e.name),
                 subtitle: Text('${fmtSize(e.size)}${e.packed ? '（圧縮）' : ''}'),
                 onTap: () => _open(c, e),
-                trailing: IconButton(
-                  icon: const Icon(Icons.download),
-                  tooltip: '保存',
-                  onPressed: () => _saveOne(c, e),
-                ),
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(
+                    icon: const Icon(Icons.share),
+                    tooltip: '共有',
+                    onPressed: () => _share(c, e),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.download),
+                    tooltip: '保存',
+                    onPressed: () => _saveOne(c, e),
+                  ),
+                ]),
               );
             },
           ),

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'disk.dart';
 import 'packed.dart';
@@ -565,6 +566,43 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(selected.clear);
   }
 
+  /// 選んだファイルを共有する（Claude アプリなどに直接送れる）。複数やフォルダはZIPにまとめる。
+  Future<void> _shareSelected() async {
+    final fat = _fat;
+    if (fat == null) return;
+    final items = (selected.toList()..sort()).map((i) => entries[i]).toList();
+    setState(() => busy = true);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    try {
+      String name;
+      Uint8List data;
+      if (items.length == 1 && !items.first.isDir) {
+        name = items.first.name;
+        data = fat.readFile(items.first);
+      } else {
+        final z = ZipWriter();
+        for (final e in items) {
+          _addToZip(z, fat, e, '', 0);
+        }
+        name = '${items.length == 1 ? items.first.name : _baseName}.zip';
+        data = z.finish();
+      }
+      final dir = Directory('${Directory.systemTemp.path}/share');
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+      dir.createSync(recursive: true);
+      final f = File('${dir.path}/$name');
+      f.writeAsBytesSync(data, flush: true);
+      if (mounted) setState(() => busy = false);
+      await Share.shareXFiles([XFile(f.path)]);
+    } catch (e) {
+      _snack('共有できませんでした: $e');
+    }
+    if (mounted) setState(() {
+      busy = false;
+      selected.clear();
+    });
+  }
+
   Future<void> _saveFolder() => _saveZip(
       List<DirEntry>.of(_fat!.list(_cluster)),
       '${stack.isEmpty ? _baseName : stack.last.name}.zip');
@@ -689,6 +727,11 @@ class _HomePageState extends State<HomePage> {
                       onPressed: busy ? null : _deleteSelected,
                     ),
                   ],
+                  IconButton(
+                    tooltip: '共有',
+                    icon: const Icon(Icons.share),
+                    onPressed: busy ? null : _shareSelected,
+                  ),
                   IconButton(
                     tooltip: '保存',
                     icon: const Icon(Icons.save_alt),
