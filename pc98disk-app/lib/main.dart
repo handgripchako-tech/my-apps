@@ -786,7 +786,7 @@ class _HomePageState extends State<HomePage> {
                         }
                       },
                       itemBuilder: (_) => [
-                        const PopupMenuItem(value: 'pmd', child: Text('曲データを抜き出す（PMD・WM・PAI）')),
+                        const PopupMenuItem(value: 'pmd', child: Text('曲データを抜き出す（PMD・WM・PAI・ファルコム）')),
                         const PopupMenuItem(value: 'info', child: Text('ディスク情報')),
                         if (_fat != null) ...const [
                           PopupMenuItem(value: 'folder', child: Text('このフォルダをZIPで保存')),

@@ -230,7 +230,7 @@ void advance(Machine &m, long long &acc, int rate, int32_t us, std::vector<int32
 }
 
 
-enum Kind { KIND_WM = 0, KIND_PAI = 1 };
+enum Kind { KIND_WM = 0, KIND_PAI = 1, KIND_FAL = 2 };
 
 // 指定のドライバで曲を鳴らし始める
 bool start_drv(Machine &m, int kind, const std::vector<uint8_t> &drv, const std::vector<uint8_t> &song,
@@ -254,6 +254,24 @@ bool start_drv(Machine &m, int kind, const std::vector<uint8_t> &drv, const std:
         if (n > 0x2000) n = 0x2000;
         memcpy(m.cpu.mem + dst, &song[0], n);
         return m.int60(0x100);
+    }
+    if (kind == KIND_FAL) {
+        // ファルコム（英雄伝説III など）。seg:0000 を DX=188h で far call して初期化、
+        // 曲を seg:1730 に置いて INT 42h AH=0 で演奏開始
+        const uint16_t seg = 0x1000;
+        if (drv.size() < 0x100 || drv.size() > 0x1730) return false;
+        memcpy(m.cpu.mem + X86::lin(seg, 0), &drv[0], drv.size());
+        m.prepStack();
+        m.cpu.sreg[0] = m.cpu.sreg[3] = seg;
+        m.cpu.r[2] = 0x188;
+        if (!m.cpu.callfar(seg, 0)) return false;
+        size_t n = song.size();
+        if (n > 0xF000 - 0x1730) n = 0xF000 - 0x1730;
+        memcpy(m.cpu.mem + X86::lin(seg, 0x1730), &song[0], n);
+        m.prepStack();
+        m.cpu.r[0] = 0x0000;
+        m.cpu.sreg[3] = m.cpu.sreg[0] = seg;
+        return m.cpu.callint(0x42);
     }
     // PAI (synthia)
     const uint16_t seg = 0x1000;
@@ -432,7 +450,8 @@ std::string drv_dir_file(const char *pcm_dir, const char *name) {
 bool load_driver(int kind, const char *pcm_dir, std::vector<uint8_t> &drv) {
     static const char *wm[] = {"MUSIC.COM", "music.com", "Music.com", nullptr};
     static const char *pai[] = {"S20S_4.BIN", "s20s_4.bin", "S20S_4.bin", nullptr};
-    const char **names = kind == KIND_WM ? wm : pai;
+    static const char *fal[] = {"FALOPNA.DRV", "falopna.drv", "FALOPNA.drv", nullptr};
+    const char **names = kind == KIND_WM ? wm : kind == KIND_PAI ? pai : fal;
     for (int i = 0; names[i]; i++) if (read_all(drv_dir_file(pcm_dir, names[i]).c_str(), drv)) return true;
     return false;
 }
@@ -490,13 +509,23 @@ DRV_EXPORT int pai_to_wav(const char *path, const char *pcm_dir, const char *wav
     return to_wav_kind(KIND_PAI, path, pcm_dir, wav_path, rate, loops, fade_sec, title, compo);
 }
 
+DRV_EXPORT int fal_probe(const char *path, const char *pcm_dir, char *title, char *compo) {
+    return probe_kind(KIND_FAL, path, pcm_dir, title, compo);
+}
+DRV_EXPORT int fal_to_wav(const char *path, const char *pcm_dir, const char *wav_path,
+                          int rate, int loops, int fade_sec, char *title, char *compo) {
+    return to_wav_kind(KIND_FAL, path, pcm_dir, wav_path, rate, loops, fade_sec, title, compo);
+}
+
 #ifdef PC98DRV_TEST
 int main(int argc, char **argv) {
     if (argc < 4) { fprintf(stderr, "usage: %s libdir song out.wav\n", argv[0]); return 1; }
     const char *p = argv[2];
     size_t l = strlen(p);
     bool pai = l > 4 && (strcasecmp(p + l - 4, ".pai") == 0);
-    int rc = pai ? pai_to_wav(p, argv[1], argv[3], 44100, 2, 6, nullptr, nullptr)
+    bool fal = l > 4 && (strcasecmp(p + l - 4, ".fal") == 0);
+    int rc = fal ? fal_to_wav(p, argv[1], argv[3], 44100, 2, 6, nullptr, nullptr)
+             : pai ? pai_to_wav(p, argv[1], argv[3], 44100, 2, 6, nullptr, nullptr)
                  : wm_to_wav(p, argv[1], argv[3], 44100, 2, 6, nullptr, nullptr);
     fprintf(stderr, "rc=%d\n", rc);
     return rc;

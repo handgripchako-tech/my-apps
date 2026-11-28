@@ -1,6 +1,7 @@
 // ゲームの「まとめファイル」（中に複数のファイルを詰めたもの）を読む。
 //   - FA1   : "FA1\0" で始まる。目次は末尾（0xFF で反転）、中身は独自のLZ圧縮。
 //   - DISK  : silky's の DISKA〜 など。先頭に件数、19バイトずつの目次（名前13・大きさ2・位置4）。
+//   - AFLB  : 日本ファルコム（英雄伝説III など）。"AFLB DAT"、位置は32バイト単位、中身は独自の圧縮。
 import 'dart:typed_data';
 
 class ArcEntry {
@@ -32,7 +33,7 @@ String _ascii(List<int> b) {
 /// まとめファイルなら中身の一覧を返す。違えば null。
 Archive? openArchive(Uint8List b) {
   try {
-    return _fa1(b) ?? _disk(b);
+    return _fa1(b) ?? _aflb(b) ?? _disk(b);
   } catch (_) {
     return null;
   }
@@ -181,4 +182,198 @@ Archive? _disk(Uint8List b) {
   }
   if (good * 2 < n) return null; // 名前の形がそれらしくない
   return Archive('DISK', out);
+}
+
+// ---- 日本ファルコム AFLB ------------------------------------------------
+
+Archive? _aflb(Uint8List b) {
+  if (b.length < 0x20) return null;
+  const sig = 'AFLB DAT';
+  for (var i = 0; i < 8; i++) {
+    if (b[i] != sig.codeUnitAt(i)) return null;
+  }
+  final n = _u16(b, 10);
+  if (n == 0 || 0x10 + n * 2 + 2 > b.length) return null;
+  final out = <ArcEntry>[];
+  for (var i = 0; i < n; i++) {
+    final a = _u16(b, 0x10 + i * 2) * 32;
+    if (a == 0 || a >= b.length) break;
+    var e = _u16(b, 0x12 + i * 2) * 32;
+    if (e <= a || e > b.length) e = b.length;
+    final start = a, end = e;
+    out.add(ArcEntry('${i.toString().padLeft(3, '0')}.BIN', end - start, true,
+        () => falcomDecode(b, start, end)));
+  }
+  return Archive('AFLB', out);
+}
+
+/// ファルコムの圧縮を戻す（2方式。ゲームの処理を写したもの）。戻せなければそのまま返す。
+Uint8List falcomDecode(Uint8List s, int start, int end) {
+  try {
+    final out = BytesBuilder(copy: false);
+    final buf = <int>[];
+    var p = start;
+    while (true) {
+      if (p + 3 > end) throw const FormatException('');
+      p = s[p + 2] == 0 ? _falBits(s, p, end, buf) : _falBytes(s, p, end, buf);
+      if (p >= end) break;
+      final flag = s[p++];
+      if (flag == 0 || buf.length > 4 * 1024 * 1024) break;
+    }
+    if (buf.isEmpty) throw const FormatException('');
+    out.add(Uint8List.fromList(buf));
+    return out.takeBytes();
+  } catch (_) {
+    return Uint8List.sublistView(s, start, end);
+  }
+}
+
+void _copy(List<int> out, int off, int n) {
+  final src = out.length - off;
+  if (src < 0) throw const FormatException('');
+  for (var k = 0; k < n; k++) {
+    out.add(out[src + k]);
+  }
+}
+
+int _falBytes(Uint8List s, int p, int end, List<int> out) {
+  final blockEnd = p + (s[p] | (s[p + 1] << 8));
+  if (blockEnd > end) throw const FormatException('');
+  p += 2;
+  while (p < blockEnd) {
+    final a = s[p++];
+    if ((a & 0x80) != 0) {
+      final n = ((a >> 5) & 3) + 4;
+      final off = ((a & 0x1f) << 8) | s[p++];
+      var src = out.length - off;
+      if (src < 0) throw const FormatException('');
+      for (var k = 0; k < n; k++) {
+        out.add(out[src + k]);
+      }
+      src += n;
+      while (p < blockEnd && (s[p] & 0xe0) == 0x60) {
+        final m = s[p++] & 0x1f;
+        for (var k = 0; k < m; k++) {
+          out.add(out[src + k]);
+        }
+        src += m;
+      }
+    } else if ((a & 0x40) != 0) {
+      int n;
+      if ((a & 0x10) != 0) {
+        n = (((a & 0xf) << 8) | s[p++]) + 4;
+      } else {
+        n = (a & 0xf) + 4;
+      }
+      final v = s[p++];
+      for (var k = 0; k < n; k++) {
+        out.add(v);
+      }
+    } else {
+      int n;
+      if ((a & 0x20) != 0) {
+        n = ((a & 0x1f) << 8) | s[p++];
+      } else {
+        n = a;
+      }
+      if (p + n > blockEnd) throw const FormatException('');
+      out.addAll(Uint8List.sublistView(s, p, p + n));
+      p += n;
+    }
+  }
+  return blockEnd;
+}
+
+int _falBits(Uint8List s, int p, int end, List<int> out) {
+  p += 2;
+  var bp = (s[p] << 8) | s[p + 1];
+  var nb = 8;
+  p += 2;
+  int bit() {
+    if (nb == 0) {
+      bp = s[p] | (s[p + 1] << 8);
+      p += 2;
+      nb = 16;
+    }
+    final r = bp & 1;
+    bp >>= 1;
+    nb--;
+    return r;
+  }
+
+  int byte() => s[p++];
+  int bits(int k) {
+    var v = 0;
+    for (var i = 0; i < k; i++) {
+      v = (v << 1) | bit();
+    }
+    return v;
+  }
+
+  while (true) {
+    if (p > end) throw const FormatException('');
+    if (bit() == 0) {
+      out.add(byte());
+      continue;
+    }
+    int off;
+    if (bit() == 0) {
+      off = byte();
+    } else {
+      off = (bits(5) << 8) | byte();
+      if (off == 0) return p;
+      if (off == 1) {
+        final ah = bit();
+        final c = bits(4);
+        final n = (ah == 1 ? ((c << 8) | byte()) : c) + 0xe;
+        final v = byte();
+        for (var k = 0; k < n; k++) {
+          out.add(v);
+        }
+        continue;
+      }
+    }
+    int n;
+    if (bit() == 1) {
+      n = 2;
+    } else if (bit() == 1) {
+      n = 3;
+    } else if (bit() == 1) {
+      n = 4;
+    } else if (bit() == 1) {
+      n = 5;
+    } else if (bit() == 0) {
+      n = byte() + 0xe;
+    } else {
+      n = bits(3) + 6;
+    }
+    _copy(out, off, n);
+  }
+}
+
+/// ファルコムの曲データらしいか（先頭に10パートの位置、最初の位置は32の倍数）
+bool isFalcomSong(Uint8List d) {
+  if (d.length < 0x40) return false;
+  var prev = -1;
+  for (var i = 0; i < 10; i++) {
+    final w = _u16(d, i * 2);
+    if (w <= prev || w >= d.length) return false;
+    prev = w;
+  }
+  final first = _u16(d, 0);
+  return first >= 0x20 && first <= 0x400 && first % 32 == 0;
+}
+
+/// ファルコムの音楽ドライバ（OPN/OPNA 版）らしいか
+bool isFalcomDriver(Uint8List d) {
+  const head = [0x00, 0x06, 0x1e, 0x60, 0x8c, 0xcd, 0x8e, 0xdd, 0x8e, 0xc5, 0x8b, 0xec, 0x80, 0xfc, 0x08];
+  if (d.length < 0x800 || d.length > 0x1730 || d[0] != 0xe9) return false;
+  for (var i = 0; i < head.length; i++) {
+    if (d[3 + i] != head[i]) return false;
+  }
+  // OPN のポート 188h を持つもの（ビープ版は除く）
+  for (var i = 0; i + 1 < d.length; i++) {
+    if (d[i] == 0x88 && d[i + 1] == 0x01) return true;
+  }
+  return false;
 }

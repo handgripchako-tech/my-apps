@@ -105,6 +105,7 @@ class _PmdPageState extends State<PmdPage> {
       _seen.clear();
       _log.clear();
       _keep.clear();
+      _falDrv = null;
       _keepBytes = 0;
       files = 0;
       current = '';
@@ -125,6 +126,8 @@ class _PmdPageState extends State<PmdPage> {
     } catch (e) {
       _snack('途中で失敗しました: $e');
     }
+    final drv = _falDrv;
+    if (drv != null) _add(PmdHit(PmdKind.driver, _falDrvPath, 0, drv, 'FALOPNA.DRV', null));
     if (!mounted) return;
     setState(() {
       scanning = false;
@@ -293,9 +296,13 @@ class _PmdPageState extends State<PmdPage> {
   }
 
   /// WM / PAI の曲（PMD以外のドライバの曲）
-  static const _otherSongExts = {'WM', 'PAI'};
+  static const _otherSongExts = {'WM', 'PAI', 'FAL'};
 
-  Future<void> _bytes(String path, String name, Uint8List d, int depth) async {
+  /// ファルコムの音楽ドライバ（いちばん大きい OPNA 版を最後に1つだけ入れる）
+  Uint8List? _falDrv;
+  String _falDrvPath = '';
+
+  Future<void> _bytes(String path, String name, Uint8List d, int depth, {String? fal}) async {
     // まとめファイル（FA1 / silky's DISK）なら中身を1つずつ調べる
     final arc = depth < 2 ? openArchive(d) : null;
     if (arc != null) {
@@ -310,11 +317,27 @@ class _PmdPageState extends State<PmdPage> {
         } catch (_) {
           continue;
         }
-        await _bytes('$path/${en.name}', en.name, x, depth + 1);
+        final arcStem = _stem(name);
+        await _bytes('$path/${en.name}', en.name, x, depth + 1,
+            fal: arc.kind == 'AFLB' ? '${arcStem}_${_stem(en.name)}' : null);
       }
       return;
     }
     _note(path, d);
+    // ファルコム（AFLB の中）の曲とドライバ
+    if (fal != null) {
+      if (isFalcomSong(d)) {
+        _add(PmdHit(PmdKind.file, path, 0, d, '$fal.FAL', null));
+        return;
+      }
+      if (isFalcomDriver(d)) {
+        if (_falDrv == null || d.length > _falDrv!.length) {
+          _falDrv = d;
+          _falDrvPath = path;
+        }
+        return;
+      }
+    }
     final ext = _ext(name);
     // WM・PAI の曲は、ゲームの音楽ドライバと組で鳴らす
     if (const {'COM', 'BIN', 'EXE'}.contains(ext) &&
@@ -457,8 +480,8 @@ class _PmdPageState extends State<PmdPage> {
       if (h.kind == PmdKind.file && i == null && pmdSongExts.contains(_ext(h.name)))
         '※中身がPMDの形式と一致しませんでした（名前だけで拾っています）',
       if (_otherSongExts.contains(_ext(h.name)))
-        '※PMDではない曲です（${_ext(h.name) == 'WM' ? 'MUSIC.COM' : 'S20S_4.BIN'} で鳴らす形式）。音楽アプリに入れるときは、一緒に見つかったドライバも選んでください',
-      if (h.kind == PmdKind.driver) '※ゲームの音楽ドライバです。WM・PAIの曲を音楽アプリで鳴らすのに使います',
+        '※PMDではない曲です（${const {'WM': 'MUSIC.COM', 'PAI': 'S20S_4.BIN', 'FAL': 'FALOPNA.DRV'}[_ext(h.name)]} で鳴らす形式）。音楽アプリに入れるときは、一緒に見つかったドライバも選んでください',
+      if (h.kind == PmdKind.driver) '※ゲームの音楽ドライバです。WM・PAI・FALの曲を音楽アプリで鳴らすのに使います',
     ];
     showDialog<void>(
       context: context,
