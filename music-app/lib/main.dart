@@ -10,6 +10,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -917,6 +918,61 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
       }
     } catch (_) {}
     await reload();
+    _initOpenWith();
+  }
+
+  // ---- ほかのアプリ（ファイルマネージャなど）から「開く」で渡された曲 ----
+  static const _openCh = MethodChannel('music_app/open');
+
+  void _initOpenWith() {
+    _openCh.setMethodCallHandler((call) async {
+      if (call.method == 'opened') await _takeOpened();
+      return null;
+    });
+    unawaited(_takeOpened());
+  }
+
+  Future<void> _takeOpened() async {
+    try {
+      final r = await _openCh.invokeMethod<Map>('take');
+      if (r == null) return;
+      final path = r['path'] as String?;
+      final name = (r['name'] as String?) ?? 'song.mid';
+      if (path == null) return;
+      final size = await File(path).length();
+      final it = await addOneFile(path, name, size);
+      if (it == null) {
+        toast('この曲は開けませんでした');
+        return;
+      }
+      addItems([it]);
+      final pl = curPl;
+      if (pl.items.isNotEmpty) await playItem(pl.id, pl.items.last.u);
+    } catch (_) {}
+  }
+
+  static const _audioExts = {
+    'mp3', 'm4a', 'aac', 'flac', 'wav', 'ogg', 'oga', 'opus', 'wma', 'mp4', '3gp', 'amr', 'mka', 'webm'
+  };
+
+  /// 1曲をアプリ内に取り込んで Item にする。MIDI/.MUS は SoundFont で鳴らす形で保存する。
+  /// 取り込めないものは null。
+  Future<Item?> addOneFile(String src, String name, int size) async {
+    final pd = off.phoneDir;
+    if (pd == null) return null;
+    final dot = name.lastIndexOf('.');
+    final ext = dot > 0 ? name.substring(dot + 1).toLowerCase() : '';
+    if (ext == 'mid' || ext == 'midi' || ext == 'mus') {
+      if (!await Pmd.probe(src)) return null;
+      final stem = _hash('pmd|$name|$size');
+      await Pmd.addSource(pd, src, stem);
+      return Item(u: _uid(), p: 'local:$stem.wav', m: null, t: _stem(name));
+    }
+    if (!_audioExts.contains(ext)) return null;
+    final fn = '${_hash('$name|$size')}.$ext';
+    final dst = File('${pd.path}/$fn');
+    if (!await dst.exists()) await File(src).copy(dst.path);
+    return Item(u: _uid(), p: 'local:$fn', m: null, t: _stem(name));
   }
 
   Future<void> reload() async {
@@ -1340,25 +1396,27 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
   // スマホ内の音楽ファイルを選んで、いまのリストに追加する (アプリ内にコピーして保持)
   Future<void> addPhoneFiles() async {
     try {
+      // MIDI(.mid)や .MUS も選べるように、種類で絞らずに選ぶ
       final r = await FilePicker.platform
-          .pickFiles(type: FileType.audio, allowMultiple: true);
+          .pickFiles(type: FileType.any, allowMultiple: true);
       if (r == null) return;
-      final pd = off.phoneDir;
-      if (pd == null) {
+      if (off.phoneDir == null) {
         toast('保存場所を用意できません');
         return;
       }
       final items = <Item>[];
+      var skip = 0;
       for (final f in r.files) {
         final src = f.path;
         if (src == null) continue;
-        final dot = f.name.lastIndexOf('.');
-        final ext = dot > 0 ? f.name.substring(dot + 1).toLowerCase() : 'mp3';
-        final fn = '${_hash('${f.name}|${f.size}')}.$ext';
-        final dst = File('${pd.path}/$fn');
-        if (!await dst.exists()) await File(src).copy(dst.path);
-        items.add(Item(u: _uid(), p: 'local:$fn', m: null, t: _stem(f.name)));
+        final it = await addOneFile(src, f.name, f.size);
+        if (it == null) {
+          skip++;
+        } else {
+          items.add(it);
+        }
       }
+      if (skip > 0) toast('$skip個は曲として読めなかったので追加していません');
       if (items.isEmpty) return;
       addItems(items);
     } catch (e) {

@@ -51,6 +51,7 @@ jobs:
           python3 patch_android.py
           python3 patch_music_extra.py
           python3 patch_pmd.py
+          python3 patch_open_file.py
           cat android/app/src/main/AndroidManifest.xml
           cat android/app/src/main/kotlin/com/chako/music_app/MainActivity.kt || true
 
