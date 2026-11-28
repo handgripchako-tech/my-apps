@@ -432,6 +432,25 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => busy = false);
   }
 
+  /// 開いているイメージを閉じて、最初の画面に戻る
+  Future<void> _closeDisk() async {
+    if (disk?.modified == true &&
+        !await _confirm('保存していない変更があります。破棄して閉じますか？', ok: '破棄して閉じる')) {
+      return;
+    }
+    setState(() {
+      disk?.close();
+      disk = null;
+      vols = [];
+      vi = 0;
+      stack.clear();
+      entries = [];
+      selected.clear();
+      fileName = '';
+      error = null;
+    });
+  }
+
   void _goUp() {
     setState(() {
       if (selected.isNotEmpty) {
@@ -621,16 +640,15 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final selecting = selected.isNotEmpty;
     return PopScope(
-      canPop: stack.isEmpty && !selecting && disk?.modified != true,
+      canPop: disk == null && !selecting,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         if (selected.isNotEmpty || stack.isNotEmpty) {
           _goUp();
           return;
         }
-        if (await _confirm('保存していない変更があります。破棄して終了しますか？', ok: '破棄して終了')) {
-          SystemNavigator.pop();
-        }
+        // いちばん上で戻る → イメージを閉じて最初の画面へ（別のファイルを選び直せる）
+        await _closeDisk();
       },
       child: Scaffold(
         appBar: selecting
@@ -679,6 +697,13 @@ class _HomePageState extends State<HomePage> {
                 ],
               )
             : AppBar(
+                leading: disk == null
+                    ? null
+                    : IconButton(
+                        tooltip: stack.isEmpty ? '閉じて別のファイルを選ぶ' : '上のフォルダへ',
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: busy ? null : () => stack.isEmpty ? _closeDisk() : _goUp(),
+                      ),
                 title: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

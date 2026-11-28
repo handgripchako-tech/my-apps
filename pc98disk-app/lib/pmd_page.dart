@@ -1,8 +1,12 @@
 // ディスクイメージから PMD の曲データ（と PCM・音色・MML）を探して取り出す画面。
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'archive.dart';
 import 'disk.dart';
@@ -64,6 +68,11 @@ class _PmdPageState extends State<PmdPage> {
   String current = '';
   bool rawMode = false;
 
+  /// Claude に調べてもらう資料：見たファイルの一覧と、音楽ドライバらしいファイルの中身
+  final List<String> _log = [];
+  final Map<String, Uint8List> _keep = {};
+  int _keepBytes = 0;
+
   @override
   void initState() {
     super.initState();
@@ -94,6 +103,9 @@ class _PmdPageState extends State<PmdPage> {
     setState(() {
       hits.clear();
       _seen.clear();
+      _log.clear();
+      _keep.clear();
+      _keepBytes = 0;
       files = 0;
       current = '';
       scanning = true;
@@ -120,6 +132,81 @@ class _PmdPageState extends State<PmdPage> {
     });
     final songs = hits.where((h) => h.isSong).length;
     _snack('曲 $songs 件、付属ファイル ${hits.length - songs} 件 見つかりました');
+    if (songs == 0 && !_cancel && !rawMode && _log.isNotEmpty && mounted) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('曲データが見つかりませんでした'),
+          content: const Text('このゲームの音楽の形式を Claude に調べてもらうための資料（ファイル一覧と、音楽ドライバらしいファイル）をまとめて共有しますか？\n\n共有先で Claude アプリを選んでください。'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('しない')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('共有する')),
+          ],
+        ),
+      );
+      if (ok == true) await _shareReport();
+    }
+  }
+
+  static const _keys = [
+    'DRIVER', 'Driver', 'driver', 'MUSIC', 'Music', 'SOUND', 'Sound', 'OPN', 'YM2', 'PMD',
+    'FMP', 'MML', 'PSG', 'synthia', 'BGM', 'MIDI', 'Version', 'VERSION', 'Copyright', '(C)', '(c)'
+  ];
+
+  static String _hexHead(Uint8List d) {
+    final n = d.length < 32 ? d.length : 32;
+    return [for (var i = 0; i < n; i++) d[i].toRadixString(16).padLeft(2, '0')].join(' ');
+  }
+
+  /// 調べたファイルを資料に書き留める
+  void _note(String path, Uint8List d) {
+    final n = d.length < 0x10000 ? d.length : 0x10000;
+    final txt = latin1.decode(Uint8List.sublistView(d, 0, n));
+    final hit = <String>[for (final k in _keys) if (txt.contains(k)) k];
+    _log.add('$path\t${d.length}\t${_hexHead(d)}${hit.isEmpty ? '' : '\t[${hit.join(',')}]'}');
+    final ext = _ext(path);
+    final exe = const {'COM', 'EXE', 'BIN', 'SYS', 'DRV', 'X', 'R'}.contains(ext);
+    final strong = hit.any((k) => const {'DRIVER', 'Driver', 'driver', 'MUSIC', 'OPN', 'PMD', 'FMP', 'synthia', 'BGM', 'SOUND'}.contains(k));
+    if (d.length <= 0x10000 && (strong || (exe && hit.isNotEmpty)) && _keepBytes + d.length <= 6 * 1024 * 1024) {
+      _keep[path] = d;
+      _keepBytes += d.length;
+    }
+  }
+
+  Future<void> _shareReport() async {
+    final z = ZipWriter();
+    final sb = StringBuffer()
+      ..writeln('PC98ディスクビューア 調査資料')
+      ..writeln('ディスク: ${widget.baseName}')
+      ..writeln('形式: ${widget.disk.format}  ${widget.disk.geometry}')
+      ..writeln('調べたファイル: ${_log.length} 個 / 中身を同梱: ${_keep.length} 個')
+      ..writeln('見つかったもの: ${hits.map((h) => h.name).join(', ')}')
+      ..writeln()
+      ..writeln('パス\t大きさ\t先頭32バイト\t含まれていた言葉');
+    for (final l in _log) {
+      sb.writeln(l);
+    }
+    z.add('README.txt', Uint8List.fromList(const Utf8Encoder().convert(sb.toString())));
+    final used = <String>{};
+    for (final e in _keep.entries) {
+      var nm = 'files/${e.key.replaceAll(':', '_')}';
+      var k = 2;
+      while (!used.add(nm.toUpperCase())) {
+        nm = 'files/${e.key.replaceAll(':', '_')}_$k';
+        k++;
+      }
+      z.add(nm, e.value);
+    }
+    final dir = Directory('${Directory.systemTemp.path}/report');
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+    dir.createSync(recursive: true);
+    final f = File('${dir.path}/${widget.baseName}_調査資料.zip');
+    f.writeAsBytesSync(z.finish(), flush: true);
+    await Share.shareXFiles(
+      [XFile(f.path, mimeType: 'application/zip')],
+      text: 'PC98ディスクビューアで「${widget.baseName}」の曲データが見つかりませんでした。'
+          'この資料（ファイル一覧と音楽ドライバらしいファイル）から、音楽の形式を調べてください。',
+    );
   }
 
   void _add(PmdHit h) {
@@ -211,6 +298,7 @@ class _PmdPageState extends State<PmdPage> {
       }
       return;
     }
+    _note(path, d);
     final ext = _ext(name);
     // WM・PAI の曲は、ゲームの音楽ドライバと組で鳴らす
     if (const {'COM', 'BIN', 'EXE'}.contains(ext) &&
@@ -403,8 +491,11 @@ class _PmdPageState extends State<PmdPage> {
               onSelected: (v) {
                 if (v == 'raw') _start(raw: true);
                 if (v == 'files') _start(raw: false);
+                if (v == 'share') _shareReport();
               },
               itemBuilder: (_) => [
+                if (_log.isNotEmpty)
+                  const PopupMenuItem(value: 'share', child: Text('Claude に調べてもらう（資料を共有）')),
                 if (!rawMode || widget.vols.isEmpty)
                   const PopupMenuItem(value: 'raw', child: Text('ディスク全体を直接調べる（消したファイル・独自形式向け）')),
                 if (rawMode && widget.vols.isNotEmpty)
