@@ -165,11 +165,27 @@ class _PmdPageState extends State<PmdPage> {
     final hit = <String>[for (final k in _keys) if (txt.contains(k)) k];
     _log.add('$path\t${d.length}\t${_hexHead(d)}${hit.isEmpty ? '' : '\t[${hit.join(',')}]'}');
     final ext = _ext(path);
+    final base = path.split('/').last.toUpperCase();
+    // MS-DOS 本体などは音楽と関係ないので入れない
+    const dos = {'IO.SYS', 'MSDOS.SYS', 'COMMAND.COM', 'HIMEM.SYS', 'EMM386.EXE', 'DBLSPACE.BIN', 'DRVSPACE.BIN'};
+    if (dos.contains(base) || txt.contains('Microsoft')) return;
     final exe = const {'COM', 'EXE', 'BIN', 'SYS', 'DRV', 'X', 'R'}.contains(ext);
-    final strong = hit.any((k) => const {'DRIVER', 'Driver', 'driver', 'MUSIC', 'OPN', 'PMD', 'FMP', 'synthia', 'BGM', 'SOUND'}.contains(k));
-    if (d.length <= 0x10000 && (strong || (exe && hit.isNotEmpty)) && _keepBytes + d.length <= 6 * 1024 * 1024) {
-      _keep[path] = d;
-      _keepBytes += d.length;
+    final strong = hit.any((k) => const {'DRIVER', 'Driver', 'driver', 'MUSIC', 'Music', 'OPN', 'YM2', 'PMD', 'FMP', 'synthia', 'BGM', 'SOUND', 'Sound', 'MIDI'}.contains(k));
+    void keep(String name, Uint8List x) {
+      if (_keepBytes + x.length > 8 * 1024 * 1024) return;
+      _keep[name] = x;
+      _keepBytes += x.length;
+    }
+
+    if (d.length <= 0x10000 && (strong || exe)) {
+      keep(path, d);
+    } else if (strong) {
+      // 大きいファイル：先頭（目次があることが多い）と、言葉が見つかった辺りを入れる
+      keep('$path.head64k', Uint8List.fromList(Uint8List.sublistView(d, 0, n)));
+    } else {
+      // それ以外：形式を見分けるため先頭 4KB だけ
+      final m = d.length < 4096 ? d.length : 4096;
+      keep('$path.head4k', Uint8List.fromList(Uint8List.sublistView(d, 0, m)));
     }
   }
 
