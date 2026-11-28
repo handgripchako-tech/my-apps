@@ -1016,6 +1016,28 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
 
   void saveSoon() => _save();
 
+  // SoundFont を替えたとき、MIDI/.MUS の曲の作り置き(WAV/AAC)を消して、次の再生で作り直す
+  Future<void> resetMidiRenders() async {
+    final pd = off.phoneDir;
+    if (pd == null) return;
+    final seen = <String>{};
+    for (final pl in S.pls) {
+      for (final it in pl.items) {
+        if (!it.isPhone) continue;
+        final fn = it.p.substring(6);
+        if (!seen.add(fn) || !Pmd.isMidiSrc(pd, fn)) continue;
+        final dot = fn.lastIndexOf('.');
+        final stem = dot > 0 ? fn.substring(0, dot) : fn;
+        for (final ext in const ['wav', 'm4a']) {
+          try {
+            await File('${pd.path}/$stem.$ext').delete();
+          } catch (_) {}
+        }
+        if (!fn.toLowerCase().endsWith('.wav')) replacePhoneFile(it.p, 'local:$stem.wav');
+      }
+    }
+  }
+
   // スマホ内ファイルの名前が変わったとき (圧縮して .m4a になったとき) に、全リストの曲を差し替える
   void replacePhoneFile(String oldP, String newP) {
     for (final pl in S.pls) {
@@ -1447,6 +1469,10 @@ class MusicHandler extends BaseAudioHandler with SeekHandler {
         final ext = f.name.contains('.') ? f.name.split('.').last.toLowerCase() : '';
         if (Pmd.isSong(f.name)) {
           songs.add(f);
+        } else if (ext == 'sf2') {
+          await Pmd.addSoundFont(src, f.name);
+          await resetMidiRenders();
+          saved++;
         } else if (companionExts.contains(ext)) {
           await Pmd.saveCompanion(src, f.name);
           saved++;
@@ -1930,6 +1956,64 @@ class _HomePageState extends State<HomePage> {
     if (r != null) h.newPl(r);
   }
 
+  // MIDIの音色（SoundFont）を選ぶ・足す・消す
+  Future<void> _menuSf() async {
+    final list = await Pmd.soundFonts();
+    final cur = await Pmd.currentSoundFont();
+    if (!mounted) return;
+    Widget mi(BuildContext c, String label, String key, {Color fg = Colors.black}) =>
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: RBtn(label, fg: fg, onTap: () => Navigator.pop(c, key)),
+        );
+    String show(String n) => n == 'GeneralUser-GS.sf2' ? 'GeneralUser GS（同梱）' : n;
+    final a = await showDialog<String>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        backgroundColor: kBg,
+        shape: const RoundedRectangleBorder(side: BorderSide(color: kLine, width: 1.2)),
+        title: const Text('[ MIDIの音色 ]', style: kTitle),
+        children: [
+          for (final n in list) mi(c, '${n == cur ? '● ' : '○ '}${show(n)}', 'use:$n'),
+          mi(c, '＋ .sf2 を追加（スマホ内から）', 'add'),
+          if (cur != 'GeneralUser-GS.sf2')
+            mi(c, '使っている音色を削除', 'del', fg: const Color(0xFF8A0000)),
+          mi(c, '閉じる', 'x'),
+        ],
+      ),
+    );
+    if (!mounted || a == null || a == 'x') return;
+    if (a.startsWith('use:')) {
+      final n = a.substring(4);
+      if (n == cur) return;
+      await Pmd.selectSoundFont(n);
+      await h.resetMidiRenders();
+      toast('MIDIの音色を「${show(n)}」にしました');
+    } else if (a == 'add') {
+      final r = await FilePicker.platform.pickFiles(type: FileType.any);
+      final f = r?.files.single;
+      if (f == null || f.path == null) return;
+      if (!f.name.toLowerCase().endsWith('.sf2')) {
+        toast('.sf2 のファイルを選んでください');
+        return;
+      }
+      toast('音色をコピーしています…');
+      try {
+        await Pmd.addSoundFont(f.path!, f.name);
+        await h.resetMidiRenders();
+        toast('MIDIの音色を「${f.name}」にしました');
+      } catch (_) {
+        toast('音色を保存できませんでした');
+      }
+    } else if (a == 'del') {
+      if (await confirmBox(context, '「${show(cur)}」を削除しますか？（同梱の音色に戻ります）')) {
+        await Pmd.deleteSoundFont(cur);
+        await h.resetMidiRenders();
+        toast('同梱の音色に戻しました');
+      }
+    }
+  }
+
   Future<void> _menuPl() async {
     Widget mi(BuildContext c, String label, String key, {Color fg = Colors.black}) =>
         Padding(
@@ -1945,6 +2029,7 @@ class _HomePageState extends State<HomePage> {
         children: [
           mi(c, 'PC-98の曲（PMD・WM・PAI・ファルコム・MIDI）を追加', 'pmd'),
           mi(c, 'スマホ内のファイルを追加', 'phone'),
+          mi(c, 'MIDIの音色（SoundFont）', 'sf'),
           mi(c, '名前を変更', 'ren'),
           mi(c, h.curPl.offline ? 'スマホに保存: ON（タップでOFF）' : 'スマホに保存: OFF（タップでON）', 'off'),
           if (h.curPl.offline) mi(c, '今すぐ保存（回線を問わない）', 'now'),
@@ -1962,6 +2047,8 @@ class _HomePageState extends State<HomePage> {
       h.addPhoneFiles();
     } else if (a == 'pmd') {
       h.addPmdFiles();
+    } else if (a == 'sf') {
+      await _menuSf();
     } else if (a == 'off') {
       h.toggleOffline();
     } else if (a == 'now') {

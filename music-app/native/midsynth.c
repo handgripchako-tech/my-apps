@@ -130,6 +130,25 @@ static void ch_run(chorus_t *c, const float *in, float *out, int n) {
 static int find_sf2(const char *dir, char *out, size_t outsz) {
     DIR *d; struct dirent *e; int found = 0;
     if (!dir || !*dir) return 0;
+    /* アプリで選んだもの(selected_sf2.txt に名前)があれば、それを使う */
+    {
+        char sel[1024], name[512];
+        FILE *fp;
+        snprintf(sel, sizeof sel, "%s/selected_sf2.txt", dir);
+        fp = fopen(sel, "rb");
+        if (fp) {
+            size_t n = fread(name, 1, sizeof name - 1, fp);
+            fclose(fp);
+            name[n] = 0;
+            while (n && (name[n-1] == '\n' || name[n-1] == '\r' || name[n-1] == ' ')) name[--n] = 0;
+            if (n && !strchr(name, '/')) {
+                FILE *t;
+                snprintf(out, outsz, "%s/%s", dir, name);
+                t = fopen(out, "rb");
+                if (t) { fclose(t); return 3; }
+            }
+        }
+    }
     d = opendir(dir);
     if (!d) return 0;
     while ((e = readdir(d))) {

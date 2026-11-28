@@ -157,14 +157,84 @@ class Pmd {
       pd != null && srcFile(pd, _stemOf(fn)).existsSync();
 
   // ---- MIDI用の SoundFont ------------------------------------------
+  // 音色置き場(pmdlib)の *.sf2 から1つを使う。どれを使うかは selected_sf2.txt に名前で書く
+  // （無ければ、入れたもの優先・無ければ同梱の GeneralUser GS。ネイティブ側も同じ順で探す）
+
+  static const _selFile = 'selected_sf2.txt';
+
+  /// 保存してある SoundFont の名前（同梱品が未展開でも一覧に出す）
+  static Future<List<String>> soundFonts() async {
+    final d = await libDir();
+    final names = <String>{_bundledSf2};
+    await for (final e in d.list()) {
+      final n = e.uri.pathSegments.last;
+      if (e is File && n.toLowerCase().endsWith('.sf2')) names.add(n);
+    }
+    final l = names.toList()..sort();
+    l.remove(_bundledSf2);
+    return [_bundledSf2, ...l];
+  }
+
+  /// いま使っている SoundFont の名前
+  static Future<String> currentSoundFont() async {
+    final d = await libDir();
+    final sel = File('${d.path}/$_selFile');
+    if (await sel.exists()) {
+      final n = (await sel.readAsString()).trim();
+      if (n == _bundledSf2 || await File('${d.path}/$n').exists()) return n;
+    }
+    for (final n in await soundFonts()) {
+      if (n != _bundledSf2) return n;
+    }
+    return _bundledSf2;
+  }
+
+  static Future<void> selectSoundFont(String name) async {
+    final d = await libDir();
+    await File('${d.path}/$_selFile').writeAsString(name);
+    if (name == _bundledSf2) await ensureSoundFont(force: true);
+  }
+
+  /// スマホ内の .sf2 を音色置き場に1つだけコピーして、それを使うようにする
+  static Future<void> addSoundFont(String srcPath, String name) async {
+    final d = await libDir();
+    final safe = name.replaceAll('/', '_');
+    final tmp = File('${d.path}/$safe.tmp');
+    await File(srcPath).copy(tmp.path);
+    await tmp.rename('${d.path}/$safe');
+    await selectSoundFont(safe);
+  }
+
+  static Future<void> deleteSoundFont(String name) async {
+    if (name == _bundledSf2) return;
+    final d = await libDir();
+    try {
+      await File('${d.path}/$name').delete();
+    } catch (_) {}
+    final sel = File('${d.path}/$_selFile');
+    if (await sel.exists() && (await sel.readAsString()).trim() == name) {
+      await sel.writeAsString(_bundledSf2);
+      await ensureSoundFont(force: true);
+    }
+  }
+
+  /// MIDI/.MUS の曲か（スマホ内ファイル名で）
+  static bool isMidiSrc(Directory pd, String fn) {
+    final p = srcFile(pd, _stemOf(fn)).path.toLowerCase();
+    return p.endsWith('.mid') || p.endsWith('.mus');
+  }
 
   static const _bundledSf2 = 'GeneralUser-GS.sf2';
 
   /// 音色ファイル置き場に SoundFont が無ければ、アプリに同梱の GeneralUser GS を置く
-  static Future<void> ensureSoundFont() async {
+  static Future<void> ensureSoundFont({bool force = false}) async {
     final d = await libDir();
-    await for (final e in d.list()) {
-      if (e is File && e.path.toLowerCase().endsWith('.sf2') && e.lengthSync() > 1024) return;
+    final bundled = File('${d.path}/$_bundledSf2');
+    if (await bundled.exists() && await bundled.length() > 1024) return;
+    if (!force) {
+      // 選んであるもの（または入れたもの）があれば、同梱品は展開しない
+      final cur = await currentSoundFont();
+      if (cur != _bundledSf2 && await File('${d.path}/$cur').exists()) return;
     }
     final data = await rootBundle.load('assets/$_bundledSf2');
     final tmp = File('${d.path}/$_bundledSf2.tmp');
